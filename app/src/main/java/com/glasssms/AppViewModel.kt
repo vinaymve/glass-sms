@@ -118,6 +118,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun markRead(threadId: Long) = viewModelScope.launch(Dispatchers.IO) { repo.markRead(threadId) }
 
+    fun toggleRead(c: Conversation) = viewModelScope.launch(Dispatchers.IO) {
+        if (c.unreadCount > 0) repo.markRead(c.threadId) else repo.markUnread(c.threadId)
+    }
+
     fun deleteThread(threadId: Long) = viewModelScope.launch(Dispatchers.IO) { repo.deleteThread(threadId) }
 
     fun deleteMessages(ids: Collection<Long>) = viewModelScope.launch(Dispatchers.IO) { repo.deleteMessages(ids) }

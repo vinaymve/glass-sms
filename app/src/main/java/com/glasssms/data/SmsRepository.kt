@@ -152,6 +152,21 @@ class SmsRepository(private val context: Context) {
         }
     }
 
+    /** Marks the newest incoming message unread, which is how the thread shows as unread. */
+    fun markUnread(threadId: Long) {
+        var latestId: Long? = null
+        query(
+            Sms.CONTENT_URI,
+            "${Sms.THREAD_ID} = ? AND ${Sms.TYPE} = ?",
+            arrayOf(threadId.toString(), Sms.MESSAGE_TYPE_INBOX.toString()),
+            "${Sms.DATE} DESC",
+        ) { c -> if (latestId == null) latestId = c.getLong(0) }
+        val id = latestId ?: return
+        runCatching {
+            resolver.update(ContentUris.withAppendedId(Sms.CONTENT_URI, id), ContentValues().apply { put(Sms.READ, 0) }, null, null)
+        }
+    }
+
     fun deleteThread(threadId: Long) {
         runCatching { resolver.delete(Sms.CONTENT_URI, "${Sms.THREAD_ID} = ?", arrayOf(threadId.toString())) }
     }

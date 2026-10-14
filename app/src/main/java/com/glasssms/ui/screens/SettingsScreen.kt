@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBackIos
@@ -29,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.glasssms.AppViewModel
 import com.glasssms.data.Settings
+import com.glasssms.data.SwipeAction
 import com.glasssms.ui.glass.GlassIconButton
 import com.glasssms.ui.glass.LiquidSegmentedControl
 import com.glasssms.ui.glass.edgeBlur
@@ -128,11 +130,16 @@ fun SettingsScreen(vm: AppViewModel, isDefaultApp: Boolean, onRequestDefault: ()
             }
             item {
                 GroupedSection(
-                    header = "Conversations",
-                    footer = if (s.confirmDelete) "You'll be asked before a conversation is deleted."
-                    else "Swipe left all the way, or tap Delete, to delete a conversation immediately.",
+                    header = "Swipe Actions",
+                    footer = "Swipe a conversation past a third of the way and let go to run the action.",
                 ) {
+                    SwipeSetting("Swipe Right", s.swipeRight) { a -> vm.updateSettings { it.copy(swipeRight = a) } }
+                    Divider()
+                    SwipeSetting("Swipe Left", s.swipeLeft) { a -> vm.updateSettings { it.copy(swipeLeft = a) } }
+                    Divider()
                     ToggleRow("Confirm Before Deleting", s.confirmDelete) { v -> vm.updateSettings { it.copy(confirmDelete = v) } }
+                    Divider()
+                    ToggleRow("Explosion on Delete", s.deleteExplosion) { v -> vm.updateSettings { it.copy(deleteExplosion = v) } }
                 }
             }
         }
@@ -144,6 +151,25 @@ fun SettingsScreen(vm: AppViewModel, isDefaultApp: Boolean, onRequestDefault: ()
             haze,
             onClick = { vm.pop() },
             modifier = Modifier.padding(top = insets.calculateTopPadding() + 6.dp, start = 16.dp),
+        )
+    }
+}
+
+private val SWIPE_OPTIONS = listOf(SwipeAction.None to "None", SwipeAction.ToggleRead to "Read", SwipeAction.Delete to "Delete")
+
+@Composable
+private fun SwipeSetting(title: String, value: SwipeAction, onChange: (SwipeAction) -> Unit) {
+    val p = LocalPalette.current
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 16.dp, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = IosType.body, color = p.label, modifier = Modifier.weight(1f))
+        LiquidSegmentedControl(
+            options = SWIPE_OPTIONS.map { it.second },
+            selected = SWIPE_OPTIONS.indexOfFirst { it.first == value }.coerceAtLeast(0),
+            onSelect = { i -> onChange(SWIPE_OPTIONS[i].first) },
+            modifier = Modifier.width(210.dp),
         )
     }
 }

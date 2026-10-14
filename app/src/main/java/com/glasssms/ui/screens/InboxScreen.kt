@@ -1,6 +1,19 @@
 package com.glasssms.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.material.icons.rounded.MarkChatRead
+import androidx.compose.material.icons.rounded.MarkChatUnread
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import com.glasssms.data.SwipeAction
+import com.glasssms.ui.fx.BlastLayer
+import com.glasssms.ui.fx.rememberBlastState
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
@@ -106,9 +119,23 @@ fun InboxScreen(vm: AppViewModel) {
     var filter by rememberSaveable { mutableIntStateOf(0) }
     var filtersOpen by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    var openRow by remember { mutableStateOf<Long?>(null) }
     var pendingDelete by remember { mutableStateOf<Conversation?>(null) }
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val blasts = rememberBlastState()
+    val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current.density
+    // Where each row and the blast overlay sit; plain refs (not state) so scrolling stays cheap.
+    val rowCoords = remember { HashMap<Long, LayoutCoordinates>() }
+    var overlayCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
+    fun delete(threadId: Long) {
+        vm.deleteThread(threadId)
+        if (!settings.deleteExplosion) return
+        val row = rowCoords[threadId]?.takeIf { it.isAttached } ?: return
+        val overlay = overlayCoords?.takeIf { it.isAttached } ?: return
+        blasts.explode(overlay.localBoundingBoxOf(row), density)
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
     val listState = rememberLazyListState()
     val collapsed by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 60 } }
     val insets = WindowInsets.systemBars.asPaddingValues()
@@ -140,24 +167,23 @@ fun InboxScreen(vm: AppViewModel) {
                 conversations == null -> Unit
                 visible.isEmpty() -> item { EmptyInbox(filtered = query.isNotBlank() || filter != 0) }
                 else -> items(visible, key = { it.threadId }) { c ->
-                    SwipeToRevealRow(
-                        isOpen = openRow == c.threadId,
-                        confirmsDelete = settings.confirmDelete,
-                        onOpenChange = { open -> openRow = if (open) c.threadId else null },
-                        onDelete = {
-                            if (settings.confirmDelete) {
-                                pendingDelete = c
-                            } else {
-                                vm.deleteThread(c.threadId)
-                                openRow = null
+                    SwipeActionRow(
+                        modifier = Modifier.onPlaced { rowCoords[c.threadId] = it },
+                        right = settings.swipeRight,
+                        left = settings.swipeLeft,
+                        isUnread = c.unreadCount > 0,
+                        removesRow = { it == SwipeAction.Delete && !settings.confirmDelete },
+                        onAction = { action ->
+                            when (action) {
+                                SwipeAction.ToggleRead -> vm.toggleRead(c)
+                                SwipeAction.Delete -> if (settings.confirmDelete) pendingDelete = c else delete(c.threadId)
+                                SwipeAction.None -> Unit
                             }
                         },
                     ) {
                         ConversationRow(
                             c = c,
-                            onClick = {
-                                if (openRow != null) openRow = null else vm.openThread(c.threadId, c.address)
-                            },
+                            onClick = { vm.openThread(c.threadId, c.address) },
                             onCopyCode = { vm.copyCode(it, c.latest.id) },
                         )
                     }
@@ -304,6 +330,8 @@ fun InboxScreen(vm: AppViewModel) {
                 GlassIconButton(Icons.Rounded.Edit, "New message", haze, onClick = { vm.openNewMessage() }, size = 50.dp, iconTint = p.accent)
             }
         }
+
+        BlastLayer(blasts, Modifier.onPlaced { overlayCoords = it })
     }
 
     BackHandler(enabled = filtersOpen) { filtersOpen = false }
@@ -314,7 +342,7 @@ fun InboxScreen(vm: AppViewModel) {
             title = { Text("Delete conversation?", style = IosType.headline) },
             text = { Text("All messages with ${c.displayName} will be permanently deleted from this phone.", style = IosType.subhead) },
             confirmButton = {
-                TextButton(onClick = { vm.deleteThread(c.threadId); pendingDelete = null; openRow = null }) {
+                TextButton(onClick = { delete(c.threadId); pendingDelete = null }) {
                     Text("Delete", color = p.red, fontWeight = FontWeight.SemiBold)
                 }
             },
@@ -404,44 +432,74 @@ fun CodeChip(label: String, onCopy: () -> Unit) {
 }
 
 /**
- * iOS-style swipe left: a short swipe reveals a red Delete button, a long one deletes outright.
- * Sized by its content only (no intrinsic measurement) so it stays cheap inside a scrolling list.
+ * Gmail-style swipe: drag past a third of the width and let go to run that side's action.
+ * The background shows the action's colour and icon, which pops (with a haptic tick) once armed.
  */
 @Composable
-private fun SwipeToRevealRow(
-    isOpen: Boolean,
-    confirmsDelete: Boolean,
-    onOpenChange: (Boolean) -> Unit,
-    onDelete: () -> Unit,
+private fun SwipeActionRow(
+    modifier: Modifier = Modifier,
+    right: SwipeAction,
+    left: SwipeAction,
+    isUnread: Boolean,
+    /** True when the action makes the row disappear, so it should fly off instead of snapping back. */
+    removesRow: (SwipeAction) -> Boolean,
+    onAction: (SwipeAction) -> Unit,
     content: @Composable () -> Unit,
 ) {
     val p = LocalPalette.current
-    val actionWidth = 88.dp
-    val actionPx = with(LocalDensity.current) { actionWidth.toPx() }
+    val haptics = LocalHapticFeedback.current
     val offset = remember { Animatable(0f) }
     var width by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
-    val settle = spring<Float>(dampingRatio = 0.8f, stiffness = 500f)
-    // Only draw the red action while the row is actually pulled aside.
-    val revealed by remember { derivedStateOf { offset.value < -0.5f } }
+    val settle = spring<Float>(dampingRatio = 0.75f, stiffness = 450f)
+    val threshold = width / 3f
 
-    LaunchedEffect(isOpen) { offset.animateTo(if (isOpen) -actionPx else 0f, settle) }
+    val action by remember(left, right) {
+        derivedStateOf {
+            when {
+                offset.value > 0.5f -> right
+                offset.value < -0.5f -> left
+                else -> SwipeAction.None
+            }
+        }
+    }
+    // Reads width inside the derivation: it's 0 until the row is measured.
+    val armed by remember { derivedStateOf { width > 0f && kotlin.math.abs(offset.value) > width / 3f } }
 
-    Box(Modifier.fillMaxWidth().onSizeChanged { width = it.width.toFloat() }) {
-        if (revealed) {
+    LaunchedEffect(armed) {
+        if (armed) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+    }
+
+    Box(modifier.fillMaxWidth().onSizeChanged { width = it.width.toFloat() }) {
+        if (action != SwipeAction.None) {
+            val color = when (action) {
+                SwipeAction.Delete -> p.red
+                else -> p.accent
+            }
+            val bg by animateColorAsState(if (armed) color else p.fill.copy(alpha = 1f), label = "swipeBg")
+            val iconScale by animateFloatAsState(
+                if (armed) 1.25f else 0.9f,
+                spring(dampingRatio = 0.45f, stiffness = 600f),
+                label = "swipeIcon",
+            )
+            val fromStart = offset.value > 0f
             Box(
-                Modifier
-                    .matchParentSize()
-                    .background(p.red)
-                    .clickable(onClick = onDelete),
-                contentAlignment = Alignment.CenterEnd,
+                Modifier.matchParentSize().background(bg).padding(horizontal = 28.dp),
+                contentAlignment = if (fromStart) Alignment.CenterStart else Alignment.CenterEnd,
             ) {
                 Column(
-                    Modifier.width(actionWidth),
                     horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
+                    },
                 ) {
-                    Icon(Icons.Rounded.Delete, null, tint = Color.White)
-                    Text("Delete", style = IosType.footnote, color = Color.White)
+                    val (icon, label) = when (action) {
+                        SwipeAction.Delete -> Icons.Rounded.Delete to "Delete"
+                        else -> if (isUnread) Icons.Rounded.MarkChatRead to "Read" else Icons.Rounded.MarkChatUnread to "Unread"
+                    }
+                    Icon(icon, null, tint = Color.White)
+                    Text(label, style = IosType.caption, color = Color.White)
                 }
             }
         }
@@ -450,20 +508,27 @@ private fun SwipeToRevealRow(
                 .offset { IntOffset(offset.value.roundToInt(), 0) }
                 .draggable(
                     orientation = Orientation.Horizontal,
+                    enabled = left != SwipeAction.None || right != SwipeAction.None,
                     state = rememberDraggableState { delta ->
-                        scope.launch { offset.snapTo((offset.value + delta).coerceIn(-width, 0f)) }
+                        val min = if (left == SwipeAction.None) 0f else -width
+                        val max = if (right == SwipeAction.None) 0f else width
+                        scope.launch { offset.snapTo((offset.value + delta).coerceIn(min, max)) }
                     },
                     onDragStopped = { velocity ->
-                        if (width > 0f && offset.value < -width * 0.6f) {
-                            offset.animateTo(-width, settle)
-                            onDelete()
-                            onOpenChange(false)
-                            // With a confirmation dialog the row slides back behind it; otherwise it's gone.
-                            if (confirmsDelete) offset.animateTo(0f, settle)
+                        val a = action
+                        val flung = kotlin.math.abs(velocity) > 2500f &&
+                            kotlin.math.sign(velocity) == kotlin.math.sign(offset.value) &&
+                            kotlin.math.abs(offset.value) > threshold / 2
+                        if (a != SwipeAction.None && (armed || flung)) {
+                            if (removesRow(a)) {
+                                offset.animateTo(kotlin.math.sign(offset.value) * width, tween(160))
+                                onAction(a)
+                            } else {
+                                onAction(a)
+                                offset.animateTo(0f, settle)
+                            }
                         } else {
-                            val open = offset.value < -actionPx / 2 || velocity < -1200f
-                            offset.animateTo(if (open) -actionPx else 0f, settle)
-                            onOpenChange(open)
+                            offset.animateTo(0f, settle)
                         }
                     },
                 ),
