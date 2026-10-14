@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.rounded.MarkChatRead
@@ -457,6 +458,8 @@ private fun SwipeActionRow(
     var width by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
     var settleJob by remember { mutableStateOf<Job?>(null) }
+    // Set once an action has fired: the action panel hides at once instead of trailing the row home.
+    var committed by remember { mutableStateOf(false) }
 
     val action by remember(left, right) {
         derivedStateOf {
@@ -473,13 +476,16 @@ private fun SwipeActionRow(
         if (armed) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
     }
 
-    fun settleTo(target: Float, spec: AnimationSpec<Float>) {
+    fun settleTo(target: Float, spec: AnimationSpec<Float>, then: () -> Unit = {}) {
         settleJob?.cancel()
-        settleJob = scope.launch { animate(dragX, target, animationSpec = spec) { v, _ -> dragX = v } }
+        settleJob = scope.launch {
+            animate(dragX, target, animationSpec = spec) { v, _ -> dragX = v }
+            then()
+        }
     }
 
     Box(modifier.fillMaxWidth().onSizeChanged { width = it.width.toFloat() }) {
-        if (action != SwipeAction.None) {
+        if (action != SwipeAction.None && !committed) {
             val color = when (action) {
                 SwipeAction.Delete -> p.red
                 else -> p.accent
@@ -522,7 +528,10 @@ private fun SwipeActionRow(
                         val max = if (right == SwipeAction.None) 0f else width
                         dragX = (dragX + delta).coerceIn(min, max)
                     },
-                    onDragStarted = { settleJob?.cancel() },
+                    onDragStarted = {
+                        settleJob?.cancel()
+                        committed = false
+                    },
                     onDragStopped = { velocity ->
                         val a = action
                         val flung = kotlin.math.abs(velocity) > 2500f &&
@@ -538,7 +547,10 @@ private fun SwipeActionRow(
                                     delay(1_500)
                                     settleTo(0f, spring(dampingRatio = 0.75f, stiffness = 450f))
                                 }
-                            } else settleTo(0f, spring(dampingRatio = 0.75f, stiffness = 450f))
+                            } else {
+                                committed = true
+                                settleTo(0f, tween(180, easing = FastOutSlowInEasing)) { committed = false }
+                            }
                         } else {
                             settleTo(0f, spring(dampingRatio = 0.75f, stiffness = 450f))
                         }
