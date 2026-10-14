@@ -97,6 +97,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun displayName(address: String) = repo.contacts.displayName(address)
 
+    suspend fun searchContacts(query: String) = withContext(Dispatchers.IO) { repo.contacts.search(query) }
+
     fun send(address: String, body: String) {
         if (body.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) { repo.send(address, body.trim()) }
