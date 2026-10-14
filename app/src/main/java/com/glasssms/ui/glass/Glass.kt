@@ -174,13 +174,16 @@ fun LiquidSegmentedControl(
     selected: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    height: Dp = 34.dp,
+    /** Track behind the thumb; pass Color.Transparent when the control sits on glass. */
+    trackColor: Color? = null,
 ) {
     val p = LocalPalette.current
     BoxWithConstraints(
         modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .drawBehind { drawRect(p.fill) }
+            .height(height)
+            .clip(RoundedCornerShape(height / 2))
+            .drawBehind { drawRect(trackColor ?: p.fill) }
             .padding(2.dp),
     ) {
         val segment = maxWidth / options.size
@@ -200,8 +203,8 @@ fun LiquidSegmentedControl(
                     scaleX = stretch
                     scaleY = 1f - (stretch - 1f) * 0.35f
                 }
-                .shadow(3.dp, RoundedCornerShape(8.dp), clip = false)
-                .clip(RoundedCornerShape(8.dp))
+                .shadow(3.dp, RoundedCornerShape(height / 2), clip = false)
+                .clip(RoundedCornerShape(height / 2))
                 .drawBehind { drawRect(if (p.isDark) Color(0xFF636366) else Color.White) },
         )
         Row(Modifier.fillMaxSize()) {

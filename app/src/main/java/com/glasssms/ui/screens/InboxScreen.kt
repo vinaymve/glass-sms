@@ -1,6 +1,9 @@
 package com.glasssms.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
@@ -40,6 +43,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
@@ -66,6 +71,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,6 +90,7 @@ import com.glasssms.ui.theme.IosType
 import com.glasssms.ui.theme.LocalPalette
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -97,6 +104,8 @@ fun InboxScreen(vm: AppViewModel) {
     val codes by vm.codes.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableIntStateOf(0) }
+    var filtersOpen by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     var openRow by remember { mutableStateOf<Long?>(null) }
     var pendingDelete by remember { mutableStateOf<Conversation?>(null) }
     val listState = rememberLazyListState()
@@ -123,17 +132,9 @@ fun InboxScreen(vm: AppViewModel) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().hazeSource(haze),
-            contentPadding = PaddingValues(top = insets.calculateTopPadding() + 56.dp, bottom = insets.calculateBottomPadding() + 96.dp),
+            contentPadding = PaddingValues(top = insets.calculateTopPadding() + 56.dp, bottom = insets.calculateBottomPadding() + if (filtersOpen) 156.dp else 96.dp),
         ) {
             item { SignTitle("Messages") }
-            item {
-                LiquidSegmentedControl(
-                    options = FILTERS,
-                    selected = filter,
-                    onSelect = { filter = it },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
             when {
                 conversations == null -> Unit
                 visible.isEmpty() -> item { EmptyInbox(filtered = query.isNotBlank() || filter != 0) }
@@ -185,50 +186,118 @@ fun InboxScreen(vm: AppViewModel) {
             }
         }
 
-        // Bottom: glass search + compose
-        Row(
+        // Bottom: filter toggle + glass search + compose; filters pop up above as a glass strip.
+        Column(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
                 .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                Modifier
-                    .weight(1f)
-                    .height(50.dp)
-                    .glass(haze, CircleShape)
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            AnimatedVisibility(
+                visible = filtersOpen,
+                enter = scaleIn(
+                    spring(dampingRatio = 0.55f, stiffness = 480f),
+                    initialScale = 0.4f,
+                    transformOrigin = TransformOrigin(0.06f, 1f),
+                ) + fadeIn(),
+                exit = scaleOut(
+                    spring(dampingRatio = 0.9f, stiffness = 700f),
+                    targetScale = 0.4f,
+                    transformOrigin = TransformOrigin(0.06f, 1f),
+                ) + fadeOut(),
             ) {
-                Icon(Icons.Rounded.Search, null, tint = p.secondaryLabel, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                BasicTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
-                    textStyle = IosType.body.copy(color = p.label),
-                    cursorBrush = SolidColor(p.accent),
-                    modifier = Modifier.weight(1f),
-                    decorationBox = { inner ->
-                        Box {
-                            if (query.isEmpty()) Text("Search", style = IosType.body, color = p.secondaryLabel)
-                            inner()
-                        }
-                    },
-                )
-                if (query.isNotEmpty()) {
-                    Icon(
-                        Icons.Rounded.Cancel, "Clear", tint = p.tertiaryLabel,
-                        modifier = Modifier.size(20.dp).clip(CircleShape).clickable { query = "" },
+                Box(
+                    Modifier
+                        .padding(bottom = 10.dp)
+                        .fillMaxWidth()
+                        .glass(haze, CircleShape)
+                        .padding(5.dp),
+                ) {
+                    LiquidSegmentedControl(
+                        options = FILTERS,
+                        selected = filter,
+                        onSelect = { i ->
+                            filter = i
+                            // Let the thumb finish its slide before the strip tucks away.
+                            scope.launch {
+                                delay(320)
+                                filtersOpen = false
+                            }
+                        },
+                        height = 40.dp,
+                        trackColor = Color.Transparent,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
-            Spacer(Modifier.width(10.dp))
-            GlassIconButton(Icons.Rounded.Edit, "New message", haze, onClick = { vm.openNewMessage() }, size = 50.dp, iconTint = p.accent)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box {
+                    GlassIconButton(
+                        if (filtersOpen) Icons.Rounded.Close else Icons.Rounded.FilterList,
+                        "Filters",
+                        haze,
+                        onClick = { filtersOpen = !filtersOpen },
+                        size = 50.dp,
+                        iconTint = if (filter != 0) p.accent else p.label,
+                    )
+                    if (filter != 0 && !filtersOpen) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = (-4).dp, y = 4.dp)
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(p.accent),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .height(50.dp)
+                        .glass(haze, CircleShape)
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Search, null, tint = p.secondaryLabel, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        textStyle = IosType.body.copy(color = p.label),
+                        cursorBrush = SolidColor(p.accent),
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { inner ->
+                            Box {
+                                if (query.isEmpty()) {
+                                    Text(
+                                        if (filter == 0) "Search" else "Search ${FILTERS[filter]}",
+                                        style = IosType.body,
+                                        color = p.secondaryLabel,
+                                        maxLines = 1,
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                    )
+                    if (query.isNotEmpty()) {
+                        Icon(
+                            Icons.Rounded.Cancel, "Clear", tint = p.tertiaryLabel,
+                            modifier = Modifier.size(20.dp).clip(CircleShape).clickable { query = "" },
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                GlassIconButton(Icons.Rounded.Edit, "New message", haze, onClick = { vm.openNewMessage() }, size = 50.dp, iconTint = p.accent)
+            }
         }
     }
+
+    BackHandler(enabled = filtersOpen) { filtersOpen = false }
 
     pendingDelete?.let { c ->
         AlertDialog(
