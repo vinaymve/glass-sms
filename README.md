@@ -19,7 +19,10 @@ on-device one-time-code (OTP) handling.
   - Codes highlighted inside the conversation, with a copy chip.
 
 ## Build
-Open the folder in Android Studio (Narwhal or newer) and run. Requires JDK 17+, compileSdk 36, minSdk 26.
+Open the folder in Android Studio and run. compileSdk 36, minSdk 26.
+
+Gradle runs on **JDK 21**, set in `gradle/gradle-daemon-jvm.properties`. Gradle 8.14 can't run on Java 25.
+If sync says no JDK 21 was found, install one (`brew install --cask temurin@21`) and sync again.
 Run the OTP parser tests from Android Studio: right-click `OtpParserTest` and choose Run.
 
 ## Font
