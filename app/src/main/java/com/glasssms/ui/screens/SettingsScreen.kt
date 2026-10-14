@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.glasssms.AppViewModel
+import com.glasssms.data.Settings
 import com.glasssms.ui.glass.GlassIconButton
 import com.glasssms.ui.glass.LiquidSegmentedControl
 import com.glasssms.ui.glass.edgeBlur
@@ -37,6 +38,13 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 
 private val DELETE_DELAYS = listOf(1, 5, 15, 60)
+
+private val AUTO_DELETE = listOf(
+    0 to "Off",
+    Settings.AUTO_DELETE_AT_EXPIRY to "Expired",
+    60 to "1 hr",
+    24 * 60 to "24 hr",
+)
 
 @Composable
 fun SettingsScreen(vm: AppViewModel, isDefaultApp: Boolean, onRequestDefault: () -> Unit) {
@@ -102,6 +110,29 @@ fun SettingsScreen(vm: AppViewModel, isDefaultApp: Boolean, onRequestDefault: ()
                             modifier = Modifier.fillMaxWidth().padding(10.dp),
                         )
                     }
+                }
+            }
+            item {
+                GroupedSection(
+                    header = "Auto-Delete Codes",
+                    footer = "Removes code messages automatically, copied or not. Applies to codes that arrive " +
+                        "from now on; clear older ones from the Codes screen.",
+                ) {
+                    LiquidSegmentedControl(
+                        options = AUTO_DELETE.map { it.second },
+                        selected = AUTO_DELETE.indexOfFirst { it.first == s.autoDeleteCodesMinutes }.coerceAtLeast(0),
+                        onSelect = { i -> vm.updateSettings { it.copy(autoDeleteCodesMinutes = AUTO_DELETE[i].first) } },
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                    )
+                }
+            }
+            item {
+                GroupedSection(
+                    header = "Conversations",
+                    footer = if (s.confirmDelete) "You'll be asked before a conversation is deleted."
+                    else "Swipe left all the way, or tap Delete, to delete a conversation immediately.",
+                ) {
+                    ToggleRow("Confirm Before Deleting", s.confirmDelete) { v -> vm.updateSettings { it.copy(confirmDelete = v) } }
                 }
             }
         }

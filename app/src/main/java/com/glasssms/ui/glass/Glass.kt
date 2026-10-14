@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.glasssms.ui.theme.IosType
 import com.glasssms.ui.theme.LocalPalette
+import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeProgressive
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeTint
@@ -82,6 +83,8 @@ fun Modifier.glass(
             fallbackTint = HazeTint(p.glassFallback)
             blurRadius = blur
             noiseFactor = 0f
+            // Blur a half-resolution copy: visually identical at this radius, ~4x fewer pixels per frame.
+            inputScale = HazeInputScale.Fixed(0.5f)
         }
         .drawBehind { drawRect(highlight) }
         .border(0.8.dp, rim, shape)
@@ -96,10 +99,12 @@ fun Modifier.edgeBlur(haze: HazeState, fromTop: Boolean = true): Modifier = comp
         fallbackTint = HazeTint(p.background.copy(alpha = 0.9f))
         blurRadius = 14.dp
         noiseFactor = 0f
+        inputScale = HazeInputScale.Fixed(0.33f)
+        // preferPerformance swaps the per-pixel variable blur for a masked single blur.
         progressive = if (fromTop) {
-            HazeProgressive.verticalGradient(startIntensity = 1f, endIntensity = 0f)
+            HazeProgressive.verticalGradient(startIntensity = 1f, endIntensity = 0f, preferPerformance = true)
         } else {
-            HazeProgressive.verticalGradient(startIntensity = 0f, endIntensity = 1f)
+            HazeProgressive.verticalGradient(startIntensity = 0f, endIntensity = 1f, preferPerformance = true)
         }
     }
 }

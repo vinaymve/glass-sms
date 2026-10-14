@@ -16,7 +16,14 @@ data class Settings(
     val autoCopy: Boolean = false,
     val deleteAfterCopy: Boolean = false,
     val deleteDelayMinutes: Int = 5,
-)
+    /** Delete every code message this long after it arrives. 0 = off, [AUTO_DELETE_AT_EXPIRY] = when the code expires. */
+    val autoDeleteCodesMinutes: Int = 0,
+    val confirmDelete: Boolean = true,
+) {
+    companion object {
+        const val AUTO_DELETE_AT_EXPIRY = -1
+    }
+}
 
 private val Context.dataStore by preferencesDataStore("settings")
 
@@ -27,6 +34,8 @@ class SettingsStore(private val context: Context) {
         val autoCopy = booleanPreferencesKey("auto_copy")
         val deleteAfterCopy = booleanPreferencesKey("delete_after_copy")
         val deleteDelay = intPreferencesKey("delete_delay_minutes")
+        val autoDelete = intPreferencesKey("auto_delete_codes_minutes")
+        val confirmDelete = booleanPreferencesKey("confirm_delete")
     }
 
     val flow: Flow<Settings> = context.dataStore.data.map(::fromPrefs)
@@ -39,6 +48,8 @@ class SettingsStore(private val context: Context) {
             autoCopy = p[Keys.autoCopy] ?: d.autoCopy,
             deleteAfterCopy = p[Keys.deleteAfterCopy] ?: d.deleteAfterCopy,
             deleteDelayMinutes = p[Keys.deleteDelay] ?: d.deleteDelayMinutes,
+            autoDeleteCodesMinutes = p[Keys.autoDelete] ?: d.autoDeleteCodesMinutes,
+            confirmDelete = p[Keys.confirmDelete] ?: d.confirmDelete,
         )
     }
 
@@ -52,6 +63,8 @@ class SettingsStore(private val context: Context) {
             p[Keys.autoCopy] = s.autoCopy
             p[Keys.deleteAfterCopy] = s.deleteAfterCopy
             p[Keys.deleteDelay] = s.deleteDelayMinutes
+            p[Keys.autoDelete] = s.autoDeleteCodesMinutes
+            p[Keys.confirmDelete] = s.confirmDelete
         }
     }
 }

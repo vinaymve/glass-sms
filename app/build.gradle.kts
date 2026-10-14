@@ -21,6 +21,8 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            // Local testing only: signed with the debug key so it installs over the debug build. Use a real key for Play.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

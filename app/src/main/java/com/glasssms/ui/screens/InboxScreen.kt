@@ -16,13 +16,11 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -59,6 +57,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,6 +71,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -108,6 +108,7 @@ fun InboxScreen(vm: AppViewModel) {
     val scope = rememberCoroutineScope()
     var openRow by remember { mutableStateOf<Long?>(null) }
     var pendingDelete by remember { mutableStateOf<Conversation?>(null) }
+    val settings by vm.settings.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val collapsed by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 60 } }
     val insets = WindowInsets.systemBars.asPaddingValues()
@@ -141,8 +142,16 @@ fun InboxScreen(vm: AppViewModel) {
                 else -> items(visible, key = { it.threadId }) { c ->
                     SwipeToRevealRow(
                         isOpen = openRow == c.threadId,
+                        confirmsDelete = settings.confirmDelete,
                         onOpenChange = { open -> openRow = if (open) c.threadId else null },
-                        onDelete = { pendingDelete = c },
+                        onDelete = {
+                            if (settings.confirmDelete) {
+                                pendingDelete = c
+                            } else {
+                                vm.deleteThread(c.threadId)
+                                openRow = null
+                            }
+                        },
                     ) {
                         ConversationRow(
                             c = c,
@@ -394,10 +403,14 @@ fun CodeChip(label: String, onCopy: () -> Unit) {
     }
 }
 
-/** iOS-style swipe left to reveal a red Delete action. */
+/**
+ * iOS-style swipe left: a short swipe reveals a red Delete button, a long one deletes outright.
+ * Sized by its content only (no intrinsic measurement) so it stays cheap inside a scrolling list.
+ */
 @Composable
 private fun SwipeToRevealRow(
     isOpen: Boolean,
+    confirmsDelete: Boolean,
     onOpenChange: (Boolean) -> Unit,
     onDelete: () -> Unit,
     content: @Composable () -> Unit,
@@ -406,24 +419,31 @@ private fun SwipeToRevealRow(
     val actionWidth = 88.dp
     val actionPx = with(LocalDensity.current) { actionWidth.toPx() }
     val offset = remember { Animatable(0f) }
+    var width by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
     val settle = spring<Float>(dampingRatio = 0.8f, stiffness = 500f)
+    // Only draw the red action while the row is actually pulled aside.
+    val revealed by remember { derivedStateOf { offset.value < -0.5f } }
 
     LaunchedEffect(isOpen) { offset.animateTo(if (isOpen) -actionPx else 0f, settle) }
 
-    Box(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-        Column(
-            Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .width(actionWidth)
-                .background(p.red)
-                .clickable(onClick = onDelete),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Icon(Icons.Rounded.Delete, null, tint = Color.White)
-            Text("Delete", style = IosType.footnote, color = Color.White)
+    Box(Modifier.fillMaxWidth().onSizeChanged { width = it.width.toFloat() }) {
+        if (revealed) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(p.red)
+                    .clickable(onClick = onDelete),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Column(
+                    Modifier.width(actionWidth),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(Icons.Rounded.Delete, null, tint = Color.White)
+                    Text("Delete", style = IosType.footnote, color = Color.White)
+                }
+            }
         }
         Box(
             Modifier
@@ -431,12 +451,20 @@ private fun SwipeToRevealRow(
                 .draggable(
                     orientation = Orientation.Horizontal,
                     state = rememberDraggableState { delta ->
-                        scope.launch { offset.snapTo((offset.value + delta).coerceIn(-actionPx * 1.4f, 0f)) }
+                        scope.launch { offset.snapTo((offset.value + delta).coerceIn(-width, 0f)) }
                     },
                     onDragStopped = { velocity ->
-                        val open = offset.value < -actionPx / 2 || velocity < -1200f
-                        offset.animateTo(if (open) -actionPx else 0f, settle)
-                        onOpenChange(open)
+                        if (width > 0f && offset.value < -width * 0.6f) {
+                            offset.animateTo(-width, settle)
+                            onDelete()
+                            onOpenChange(false)
+                            // With a confirmation dialog the row slides back behind it; otherwise it's gone.
+                            if (confirmsDelete) offset.animateTo(0f, settle)
+                        } else {
+                            val open = offset.value < -actionPx / 2 || velocity < -1200f
+                            offset.animateTo(if (open) -actionPx else 0f, settle)
+                            onOpenChange(open)
+                        }
                     },
                 ),
         ) { content() }

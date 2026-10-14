@@ -13,6 +13,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.glasssms.app
+import com.glasssms.data.Settings
 import java.util.concurrent.TimeUnit
 
 object CodeActions {
@@ -30,15 +31,28 @@ object CodeActions {
     suspend fun copyAndMaybeCleanUp(context: Context, code: String, messageId: Long) {
         copy(context, code)
         val settings = context.app.settings.current()
-        if (settings.deleteAfterCopy) scheduleCleanup(context, messageId, settings.deleteDelayMinutes)
+        if (settings.deleteAfterCopy) {
+            scheduleCleanup(context, messageId, TimeUnit.MINUTES.toMillis(settings.deleteDelayMinutes.toLong()))
+        }
     }
 
-    fun scheduleCleanup(context: Context, messageId: Long, delayMinutes: Int) {
+    /** Applies the "Auto-Delete Codes" setting to a code that just arrived. */
+    fun scheduleAutoDelete(context: Context, messageId: Long, otp: Otp, settings: Settings) {
+        val delay = when (val m = settings.autoDeleteCodesMinutes) {
+            0 -> return
+            Settings.AUTO_DELETE_AT_EXPIRY -> otp.validForMillis
+            else -> TimeUnit.MINUTES.toMillis(m.toLong())
+        }
+        scheduleCleanup(context, messageId, delay, name = "autodelete-$messageId")
+    }
+
+    /** Separate [name]s keep the copy and auto-delete timers from replacing each other; whichever fires first wins. */
+    fun scheduleCleanup(context: Context, messageId: Long, delayMillis: Long, name: String = "cleanup-$messageId") {
         val request = OneTimeWorkRequestBuilder<CodeCleanupWorker>()
-            .setInitialDelay(delayMinutes.toLong(), TimeUnit.MINUTES)
+            .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
             .setInputData(workDataOf(CodeCleanupWorker.KEY_ID to messageId))
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork("cleanup-$messageId", ExistingWorkPolicy.REPLACE, request)
+        WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.REPLACE, request)
     }
 }
 

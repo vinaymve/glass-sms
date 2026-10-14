@@ -48,6 +48,7 @@ class SmsDeliverReceiver : BroadcastReceiver() {
         val settings = context.app.settings.current()
         val otp = if (settings.detectCodes) OtpParser.parse(body, address) else null
 
+        if (otp != null) CodeActions.scheduleAutoDelete(context, messageId, otp, settings)
         if (otp != null && settings.autoCopy) {
             CodeActions.copyAndMaybeCleanUp(context, otp.code, messageId)
         }
