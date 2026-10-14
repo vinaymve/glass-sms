@@ -3,6 +3,8 @@ package com.glasssms.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.rounded.MarkChatRead
 import androidx.compose.material.icons.rounded.MarkChatUnread
@@ -17,7 +19,6 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -103,6 +104,7 @@ import com.glasssms.ui.theme.IosType
 import com.glasssms.ui.theme.LocalPalette
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -434,6 +436,9 @@ fun CodeChip(label: String, onCopy: () -> Unit) {
 /**
  * Gmail-style swipe: drag past a third of the width and let go to run that side's action.
  * The background shows the action's colour and icon, which pops (with a haptic tick) once armed.
+ *
+ * The drag writes the offset synchronously and the action runs the moment the finger lifts, before
+ * any animation; the fly-off/snap-back is purely cosmetic, so interrupting it can't drop the action.
  */
 @Composable
 private fun SwipeActionRow(
@@ -448,26 +453,29 @@ private fun SwipeActionRow(
 ) {
     val p = LocalPalette.current
     val haptics = LocalHapticFeedback.current
-    val offset = remember { Animatable(0f) }
+    var dragX by remember { mutableFloatStateOf(0f) }
     var width by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
-    val settle = spring<Float>(dampingRatio = 0.75f, stiffness = 450f)
-    val threshold = width / 3f
+    var settleJob by remember { mutableStateOf<Job?>(null) }
 
     val action by remember(left, right) {
         derivedStateOf {
             when {
-                offset.value > 0.5f -> right
-                offset.value < -0.5f -> left
+                dragX > 0.5f -> right
+                dragX < -0.5f -> left
                 else -> SwipeAction.None
             }
         }
     }
-    // Reads width inside the derivation: it's 0 until the row is measured.
-    val armed by remember { derivedStateOf { width > 0f && kotlin.math.abs(offset.value) > width / 3f } }
+    val armed by remember { derivedStateOf { width > 0f && kotlin.math.abs(dragX) > width / 3f } }
 
     LaunchedEffect(armed) {
         if (armed) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+    }
+
+    fun settleTo(target: Float, spec: AnimationSpec<Float>) {
+        settleJob?.cancel()
+        settleJob = scope.launch { animate(dragX, target, animationSpec = spec) { v, _ -> dragX = v } }
     }
 
     Box(modifier.fillMaxWidth().onSizeChanged { width = it.width.toFloat() }) {
@@ -482,7 +490,7 @@ private fun SwipeActionRow(
                 spring(dampingRatio = 0.45f, stiffness = 600f),
                 label = "swipeIcon",
             )
-            val fromStart = offset.value > 0f
+            val fromStart = dragX > 0f
             Box(
                 Modifier.matchParentSize().background(bg).padding(horizontal = 28.dp),
                 contentAlignment = if (fromStart) Alignment.CenterStart else Alignment.CenterEnd,
@@ -505,30 +513,34 @@ private fun SwipeActionRow(
         }
         Box(
             Modifier
-                .offset { IntOffset(offset.value.roundToInt(), 0) }
+                .offset { IntOffset(dragX.roundToInt(), 0) }
                 .draggable(
                     orientation = Orientation.Horizontal,
                     enabled = left != SwipeAction.None || right != SwipeAction.None,
                     state = rememberDraggableState { delta ->
                         val min = if (left == SwipeAction.None) 0f else -width
                         val max = if (right == SwipeAction.None) 0f else width
-                        scope.launch { offset.snapTo((offset.value + delta).coerceIn(min, max)) }
+                        dragX = (dragX + delta).coerceIn(min, max)
                     },
+                    onDragStarted = { settleJob?.cancel() },
                     onDragStopped = { velocity ->
                         val a = action
                         val flung = kotlin.math.abs(velocity) > 2500f &&
-                            kotlin.math.sign(velocity) == kotlin.math.sign(offset.value) &&
-                            kotlin.math.abs(offset.value) > threshold / 2
+                            kotlin.math.sign(velocity) == kotlin.math.sign(dragX) &&
+                            kotlin.math.abs(dragX) > width / 6f
                         if (a != SwipeAction.None && (armed || flung)) {
+                            onAction(a)
                             if (removesRow(a)) {
-                                offset.animateTo(kotlin.math.sign(offset.value) * width, tween(160))
-                                onAction(a)
-                            } else {
-                                onAction(a)
-                                offset.animateTo(0f, settle)
-                            }
+                                settleTo(kotlin.math.sign(dragX) * width, tween(160))
+                                // The list normally drops this row within a frame or two; if the delete
+                                // failed it's still here, so bring it back rather than leave a gap.
+                                scope.launch {
+                                    delay(1_500)
+                                    settleTo(0f, spring(dampingRatio = 0.75f, stiffness = 450f))
+                                }
+                            } else settleTo(0f, spring(dampingRatio = 0.75f, stiffness = 450f))
                         } else {
-                            offset.animateTo(0f, settle)
+                            settleTo(0f, spring(dampingRatio = 0.75f, stiffness = 450f))
                         }
                     },
                 ),
