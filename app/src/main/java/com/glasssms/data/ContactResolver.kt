@@ -34,7 +34,11 @@ class ContactResolver(private val context: Context) {
     fun clear() = cache.clear()
 
     companion object {
+        // Indian-style business sender IDs: "AD-AIRTEL-S", "JX-HDFCBK" → "AIRTEL", "HDFCBK".
+        private val senderId = Regex("""^[A-Za-z]{2}-([A-Za-z0-9]{3,})(?:-[A-Za-z])?$""")
+
         fun formatAddress(address: String): String {
+            senderId.matchEntire(address)?.let { return it.groupValues[1] }
             if (address.any { it.isLetter() }) return address
             return PhoneNumberUtils.formatNumber(address, Locale.getDefault().country) ?: address
         }

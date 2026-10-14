@@ -126,7 +126,13 @@ object Mta {
         Color(0xFF808183) to Color.White, // S
     )
 
-    fun forKey(key: String) = routes[Math.floorMod(key.hashCode(), routes.size)]
+    private val lines = listOf("123", "456", "7", "ACE", "BDFM", "G", "JZ", "L", "NQRW", "S")
+
+    /** The real colour for a route label like "A" or "7", else a stable pick from the key's hash. */
+    fun forKey(key: String): Pair<Color, Color> {
+        val i = lines.indexOfFirst { key.length == 1 && key.uppercase() in it }
+        return routes[if (i >= 0) i else Math.floorMod(key.hashCode(), routes.size)]
+    }
 }
 
 /** iOS Dynamic Type sizes at the default "Large" setting, set in the subway face. */
