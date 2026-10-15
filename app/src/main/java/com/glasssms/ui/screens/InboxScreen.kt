@@ -493,22 +493,30 @@ private fun ConversationRow(
             Avatar(c.displayName, size = 48.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        c.displayName,
-                        style = IosType.headline,
-                        color = p.label,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    if (muted) {
-                        Spacer(Modifier.width(4.dp))
-                        Icon(Icons.Rounded.NotificationsOff, "Muted", tint = p.tertiaryLabel, modifier = Modifier.size(15.dp))
+                Row {
+                    Row(Modifier.weight(1f).alignByBaseline(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            c.displayName,
+                            style = IosType.headline,
+                            color = p.label,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (muted) {
+                            Spacer(Modifier.width(4.dp))
+                            Icon(Icons.Rounded.NotificationsOff, "Muted", tint = p.tertiaryLabel, modifier = Modifier.size(15.dp))
+                        }
                     }
-                    Spacer(Modifier.weight(1f))
-                    Text(Times.listLabel(c.latest.date, dateStyle), style = IosType.timestamp, color = p.secondaryLabel, maxLines = 1)
-                    Icon(Icons.Rounded.ChevronRight, null, tint = p.tertiaryLabel, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    // Sits in the top-right corner, on the name's baseline, flush with the preview's right edge.
+                    Text(
+                        Times.listLabel(c.latest.date, dateStyle),
+                        style = IosType.timestamp,
+                        color = p.secondaryLabel,
+                        maxLines = 1,
+                        modifier = Modifier.alignByBaseline(),
+                    )
                 }
                 Spacer(Modifier.height(2.dp))
                 if (otpFresh && c.otp != null) {
