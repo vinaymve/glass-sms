@@ -57,12 +57,15 @@ import com.glasssms.ui.theme.LocalPalette
 import com.glasssms.ui.theme.Mta
 import com.glasssms.ui.theme.SubwayFont
 import dev.chrisbanes.haze.HazeState
+import android.text.format.DateFormat
+import com.glasssms.data.DateStyle
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 
 /** Contact avatar drawn as an NYC subway route bullet, coloured per contact. */
 @Composable
@@ -230,15 +233,31 @@ object Times {
     private val weekday = DateTimeFormatter.ofPattern("EEEE")
     private val headerDate = DateTimeFormatter.ofPattern("EEE, d MMM")
 
-    /** Conversation list: "9:41 AM", "Yesterday", "Tuesday", "12/03/25". */
-    fun listLabel(millis: Long): String {
+    private fun pattern(skeleton: String) =
+        DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(Locale.getDefault(), skeleton))
+
+    // Locale-ordered: "13 Oct" in India, "Oct 13" in the US.
+    private val dayMonth by lazy { pattern("dMMM") }
+    private val dayMonthYear by lazy { pattern("dMMMyyyy") }
+
+    /**
+     * Conversation list. Today is always the time; older messages follow [style]:
+     * Day "Yesterday" / "Tuesday" / "12/03/25", Date "13 Oct", DateTime "13 Oct, 9:41 AM".
+     */
+    fun listLabel(millis: Long, style: DateStyle = DateStyle.Day): String {
         val dt = Instant.ofEpochMilli(millis).atZone(zone)
-        val days = ChronoUnit.DAYS.between(dt.toLocalDate(), LocalDate.now(zone))
-        return when {
-            days <= 0L -> time.format(dt)
-            days == 1L -> "Yesterday"
-            days < 7L -> weekday.format(dt)
-            else -> shortDate.format(dt)
+        val today = LocalDate.now(zone)
+        val days = ChronoUnit.DAYS.between(dt.toLocalDate(), today)
+        if (days <= 0L) return time.format(dt)
+        val date = if (dt.year == today.year) dayMonth.format(dt) else dayMonthYear.format(dt)
+        return when (style) {
+            DateStyle.Day -> when {
+                days == 1L -> "Yesterday"
+                days < 7L -> weekday.format(dt)
+                else -> shortDate.format(dt)
+            }
+            DateStyle.Date -> date
+            DateStyle.DateTime -> "$date, ${time.format(dt)}"
         }
     }
 

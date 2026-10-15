@@ -14,6 +14,9 @@ import kotlinx.coroutines.flow.map
 
 enum class SwipeAction { None, ToggleRead, Archive, Delete }
 
+/** How the inbox labels messages older than today. */
+enum class DateStyle { Day, Date, DateTime }
+
 data class Settings(
     val detectCodes: Boolean = true,
     val codeNotifications: Boolean = true,
@@ -36,6 +39,7 @@ data class Settings(
     /** Sender keys from [Categorizer.senderKey]. */
     val blockedSenders: Set<String> = emptySet(),
     val blockedKeywords: Set<String> = emptySet(),
+    val dateStyle: DateStyle = DateStyle.Day,
 ) {
     companion object {
         const val AUTO_DELETE_AT_EXPIRY = -1
@@ -63,6 +67,7 @@ class SettingsStore(private val context: Context) {
         val blockPromotional = booleanPreferencesKey("block_promotional")
         val blockedSenders = stringSetPreferencesKey("blocked_senders")
         val blockedKeywords = stringSetPreferencesKey("blocked_keywords")
+        val dateStyle = stringPreferencesKey("date_style")
     }
 
     val flow: Flow<Settings> = context.dataStore.data.map(::fromPrefs)
@@ -87,6 +92,7 @@ class SettingsStore(private val context: Context) {
             blockPromotional = p[Keys.blockPromotional] ?: d.blockPromotional,
             blockedSenders = p[Keys.blockedSenders] ?: d.blockedSenders,
             blockedKeywords = p[Keys.blockedKeywords] ?: d.blockedKeywords,
+            dateStyle = DateStyle.entries.firstOrNull { it.name == p[Keys.dateStyle] } ?: d.dateStyle,
         )
     }
 
@@ -116,6 +122,7 @@ class SettingsStore(private val context: Context) {
             p[Keys.blockPromotional] = s.blockPromotional
             p[Keys.blockedSenders] = s.blockedSenders
             p[Keys.blockedKeywords] = s.blockedKeywords
+            p[Keys.dateStyle] = s.dateStyle.name
         }
     }
 }

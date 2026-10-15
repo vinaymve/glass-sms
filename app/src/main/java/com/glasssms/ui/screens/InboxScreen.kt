@@ -12,6 +12,7 @@ import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.Report
 import androidx.compose.material.icons.rounded.Unarchive
 import com.glasssms.data.Category
+import com.glasssms.data.DateStyle
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.outlined.PushPin
@@ -271,6 +272,7 @@ fun InboxScreen(vm: AppViewModel) {
                             onClick = { vm.openThread(c.threadId, c.address) },
                             onLongClick = { openMenu(c) },
                             muted = c.threadId in settings.mutedThreads,
+                            dateStyle = settings.dateStyle,
                             onCopyCode = { vm.copyCode(it, c.latest.id) },
                         )
                     }
@@ -473,7 +475,14 @@ fun SignTitle(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ConversationRow(c: Conversation, onClick: () -> Unit, onLongClick: () -> Unit, muted: Boolean, onCopyCode: (String) -> Unit) {
+private fun ConversationRow(
+    c: Conversation,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    muted: Boolean,
+    dateStyle: DateStyle,
+    onCopyCode: (String) -> Unit,
+) {
     val p = LocalPalette.current
     val otpFresh = c.otp != null && System.currentTimeMillis() < c.latest.date + c.otp.validForMillis
     Column(Modifier.fillMaxWidth().background(p.background).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
@@ -498,7 +507,7 @@ private fun ConversationRow(c: Conversation, onClick: () -> Unit, onLongClick: (
                         Icon(Icons.Rounded.NotificationsOff, "Muted", tint = p.tertiaryLabel, modifier = Modifier.size(15.dp))
                     }
                     Spacer(Modifier.weight(1f))
-                    Text(Times.listLabel(c.latest.date), style = IosType.subhead, color = p.secondaryLabel)
+                    Text(Times.listLabel(c.latest.date, dateStyle), style = IosType.subhead, color = p.secondaryLabel, maxLines = 1)
                     Icon(Icons.Rounded.ChevronRight, null, tint = p.tertiaryLabel, modifier = Modifier.size(18.dp))
                 }
                 Spacer(Modifier.height(2.dp))

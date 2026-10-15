@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.glasssms.AppViewModel
+import com.glasssms.data.DateStyle
 import com.glasssms.data.Settings
 import com.glasssms.data.SwipeAction
 import com.glasssms.ui.glass.GlassIconButton
@@ -154,6 +155,16 @@ fun SettingsScreen(vm: AppViewModel, isDefaultApp: Boolean, onRequestDefault: ()
                 }
             }
             item {
+                GroupedSection(header = "Inbox Dates", footer = "Today's messages always show the time.") {
+                    LiquidSegmentedControl(
+                        options = DATE_STYLES.map { it.second },
+                        selected = DATE_STYLES.indexOfFirst { it.first == s.dateStyle }.coerceAtLeast(0),
+                        onSelect = { i -> vm.updateSettings { it.copy(dateStyle = DATE_STYLES[i].first) } },
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                    )
+                }
+            }
+            item {
                 GroupedSection(
                     header = "Notifications",
                     footer = "Offers are promotional texts (TRAI \u201c-P\u201d senders and similar). They still arrive, just silently. " +
@@ -195,6 +206,12 @@ fun SettingsScreen(vm: AppViewModel, isDefaultApp: Boolean, onRequestDefault: ()
 
     if (cleaning) CleanerDialog(vm) { cleaning = false }
 }
+
+private val DATE_STYLES = listOf(
+    DateStyle.Day to "Day",
+    DateStyle.Date to "Date",
+    DateStyle.DateTime to "Date & Time",
+)
 
 private val SWIPE_OPTIONS = listOf(
     SwipeAction.None to "None",
