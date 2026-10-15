@@ -79,5 +79,6 @@
 
         <receiver android:name=".sms.SmsSentReceiver" android:exported="false" />
         <receiver android:name=".otp.CopyCodeReceiver" android:exported="false" />
+        <receiver android:name=".sms.NotificationActionReceiver" android:exported="false" />
     </application>
 </manifest>

@@ -54,7 +54,10 @@ import com.glasssms.Screen
 import com.glasssms.data.SmsRepository
 import com.glasssms.ui.glass.GlassCapsule
 import com.glasssms.ui.glass.glass
+import com.glasssms.ui.screens.BlockedScreen
 import com.glasssms.ui.screens.CodesScreen
+import com.glasssms.ui.screens.SpamScreen
+import com.glasssms.ui.screens.TrashScreen
 import com.glasssms.ui.screens.InboxScreen
 import com.glasssms.ui.screens.NewMessageScreen
 import com.glasssms.ui.screens.SettingsScreen
@@ -124,6 +127,9 @@ fun AppRoot(vm: AppViewModel) {
             is Screen.NewMessage -> NewMessageScreen(vm, s.address, s.body)
             Screen.Codes -> CodesScreen(vm)
             Screen.Settings -> SettingsScreen(vm, isDefault, requestDefault)
+            Screen.Trash -> TrashScreen(vm)
+            Screen.Spam -> SpamScreen(vm)
+            Screen.Blocked -> BlockedScreen(vm)
         }
     }
 }

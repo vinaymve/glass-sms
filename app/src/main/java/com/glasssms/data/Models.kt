@@ -26,6 +26,7 @@ data class Conversation(
     val unreadCount: Int,
     /** Code detected in the latest message, if it is an incoming one. */
     val otp: Otp?,
+    val category: Category,
 )
 
 data class OtpEntry(

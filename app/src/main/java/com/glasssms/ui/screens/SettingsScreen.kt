@@ -2,6 +2,16 @@ package com.glasssms.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.glasssms.Screen
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -54,6 +64,7 @@ fun SettingsScreen(vm: AppViewModel, isDefaultApp: Boolean, onRequestDefault: ()
     val haze = rememberHazeState()
     val s by vm.settings.collectAsStateWithLifecycle()
     val insets = WindowInsets.systemBars.asPaddingValues()
+    var cleaning by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().background(p.groupedBackground)) {
         LazyColumn(
@@ -142,6 +153,34 @@ fun SettingsScreen(vm: AppViewModel, isDefaultApp: Boolean, onRequestDefault: ()
                     ToggleRow("Explosion on Delete", s.deleteExplosion) { v -> vm.updateSettings { it.copy(deleteExplosion = v) } }
                 }
             }
+            item {
+                GroupedSection(
+                    header = "Notifications",
+                    footer = "Offers are promotional texts (TRAI \u201c-P\u201d senders and similar). They still arrive, just silently. " +
+                        "Mute any conversation from its long-press menu.",
+                ) {
+                    ToggleRow("Silence Offers", s.silenceOffers) { v -> vm.updateSettings { it.copy(silenceOffers = v) } }
+                }
+            }
+            item {
+                GroupedSection(
+                    header = "Spam & Blocking",
+                    footer = "Blocked messages skip your inbox and notifications and wait in Spam, where you can restore them.",
+                ) {
+                    ToggleRow("Block All Promotional (-P)", s.blockPromotional) { v -> vm.updateSettings { it.copy(blockPromotional = v) } }
+                    Divider()
+                    NavRow("Blocked Senders & Words", "${s.blockedSenders.size + s.blockedKeywords.size}") { vm.push(Screen.Blocked) }
+                    Divider()
+                    NavRow("Spam") { vm.push(Screen.Spam) }
+                }
+            }
+            item {
+                GroupedSection(header = "Storage") {
+                    NavRow("Clean Up Inbox") { cleaning = true }
+                    Divider()
+                    NavRow("Recently Deleted") { vm.push(Screen.Trash) }
+                }
+            }
         }
 
         Box(Modifier.fillMaxWidth().height(insets.calculateTopPadding() + 64.dp).edgeBlur(haze))
@@ -153,24 +192,42 @@ fun SettingsScreen(vm: AppViewModel, isDefaultApp: Boolean, onRequestDefault: ()
             modifier = Modifier.padding(top = insets.calculateTopPadding() + 6.dp, start = 16.dp),
         )
     }
+
+    if (cleaning) CleanerDialog(vm) { cleaning = false }
 }
 
-private val SWIPE_OPTIONS = listOf(SwipeAction.None to "None", SwipeAction.ToggleRead to "Read", SwipeAction.Delete to "Delete")
+private val SWIPE_OPTIONS = listOf(
+    SwipeAction.None to "None",
+    SwipeAction.ToggleRead to "Read",
+    SwipeAction.Archive to "Archive",
+    SwipeAction.Delete to "Delete",
+)
 
 @Composable
 private fun SwipeSetting(title: String, value: SwipeAction, onChange: (SwipeAction) -> Unit) {
     val p = LocalPalette.current
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 16.dp, end = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(title, style = IosType.body, color = p.label, modifier = Modifier.weight(1f))
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 10.dp)) {
+        Text(title, style = IosType.body, color = p.label)
+        Spacer(Modifier.height(8.dp))
         LiquidSegmentedControl(
             options = SWIPE_OPTIONS.map { it.second },
             selected = SWIPE_OPTIONS.indexOfFirst { it.first == value }.coerceAtLeast(0),
             onSelect = { i -> onChange(SWIPE_OPTIONS[i].first) },
-            modifier = Modifier.width(210.dp),
+            modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+@Composable
+private fun NavRow(title: String, detail: String? = null, onClick: () -> Unit) {
+    val p = LocalPalette.current
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onClick).padding(start = 16.dp, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = IosType.body, color = p.label, modifier = Modifier.weight(1f))
+        if (detail != null) Text(detail, style = IosType.body, color = p.secondaryLabel)
+        Icon(Icons.Rounded.ChevronRight, null, tint = p.tertiaryLabel, modifier = Modifier.size(20.dp))
     }
 }
 

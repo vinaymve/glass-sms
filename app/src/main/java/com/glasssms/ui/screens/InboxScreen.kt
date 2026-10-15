@@ -1,6 +1,17 @@
 package com.glasssms.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsOff
+import androidx.compose.material.icons.rounded.Report
+import androidx.compose.material.icons.rounded.Unarchive
+import com.glasssms.data.Category
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.outlined.PushPin
@@ -118,7 +129,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-private val FILTERS = listOf("All", "Known", "Unknown", "Codes")
+private val FILTERS = listOf("All", "Personal", "Transactions", "OTPs", "Offers", "Unread", "Archived")
+private const val FILTER_ARCHIVED = 6
 
 @Composable
 fun InboxScreen(vm: AppViewModel) {
@@ -149,6 +161,7 @@ fun InboxScreen(vm: AppViewModel) {
     }
     val listState = rememberLazyListState()
     var menuOpen by remember { mutableStateOf(false) }
+    var cleaning by remember { mutableStateOf(false) }
     // Thread whose long-press menu is showing.
     var menuFor by remember { mutableStateOf<Long?>(null) }
 
@@ -159,13 +172,17 @@ fun InboxScreen(vm: AppViewModel) {
     val now = System.currentTimeMillis()
     val activeCodes = codes.count { it.isActive(now) }
 
-    val visible = remember(conversations, query, filter) {
+    val visible = remember(conversations, query, filter, settings.archivedThreads) {
         conversations.orEmpty().filter { c ->
+            val archived = c.threadId in settings.archivedThreads
             val matchesFilter = when (filter) {
-                1 -> c.isKnown
-                2 -> !c.isKnown
-                3 -> c.otp != null
-                else -> true
+                1 -> !archived && c.category == Category.Personal
+                2 -> !archived && c.category == Category.Transactions
+                3 -> !archived && c.category == Category.Otps
+                4 -> !archived && c.category == Category.Offers
+                5 -> !archived && c.unreadCount > 0
+                FILTER_ARCHIVED -> archived
+                else -> !archived
             }
             matchesFilter && (query.isBlank() ||
                 c.displayName.contains(query, ignoreCase = true) ||
@@ -189,6 +206,11 @@ fun InboxScreen(vm: AppViewModel) {
                 },
                 if (c.unreadCount > 0) MenuItem("Mark as Read", Icons.Rounded.MarkChatRead) { vm.toggleRead(c) }
                 else MenuItem("Mark as Unread", Icons.Rounded.MarkChatUnread) { vm.toggleRead(c) },
+                if (c.threadId in settings.mutedThreads) MenuItem("Unmute", Icons.Rounded.Notifications) { vm.toggleMute(c.threadId) }
+                else MenuItem("Mute", Icons.Rounded.NotificationsOff) { vm.toggleMute(c.threadId) },
+                if (c.threadId in settings.archivedThreads) MenuItem("Unarchive", Icons.Rounded.Unarchive) { vm.toggleArchive(c.threadId) }
+                else MenuItem("Archive", Icons.Rounded.Archive) { vm.toggleArchive(c.threadId) },
+                MenuItem("Block & Report Spam", Icons.Rounded.Block, destructive = true) { vm.blockAndReport(c) },
                 MenuItem("Delete", Icons.Rounded.Delete, destructive = true) { requestDelete(c) },
             ),
         )
@@ -233,11 +255,13 @@ fun InboxScreen(vm: AppViewModel) {
                         right = settings.swipeRight,
                         left = settings.swipeLeft,
                         isUnread = c.unreadCount > 0,
-                        removesRow = { it == SwipeAction.Delete && !settings.confirmDelete },
+                        isArchived = c.threadId in settings.archivedThreads,
+                        removesRow = { it == SwipeAction.Archive || (it == SwipeAction.Delete && !settings.confirmDelete) },
                         onAction = { action ->
                             when (action) {
                                 SwipeAction.ToggleRead -> vm.toggleRead(c)
                                 SwipeAction.Delete -> requestDelete(c)
+                                SwipeAction.Archive -> vm.toggleArchive(c.threadId)
                                 SwipeAction.None -> Unit
                             }
                         },
@@ -246,6 +270,7 @@ fun InboxScreen(vm: AppViewModel) {
                             c = c,
                             onClick = { vm.openThread(c.threadId, c.address) },
                             onLongClick = { openMenu(c) },
+                            muted = c.threadId in settings.mutedThreads,
                             onCopyCode = { vm.copyCode(it, c.latest.id) },
                         )
                     }
@@ -299,6 +324,9 @@ fun InboxScreen(vm: AppViewModel) {
                             vm.push(Screen.Codes)
                         },
                         MenuItem("Mark All as Read", Icons.Rounded.DoneAll) { vm.markAllRead() },
+                        MenuItem("Clean Up Inbox", Icons.Rounded.CleaningServices) { cleaning = true },
+                        MenuItem("Spam", Icons.Rounded.Report) { vm.push(Screen.Spam) },
+                        MenuItem("Recently Deleted", Icons.Rounded.DeleteSweep) { vm.push(Screen.Trash) },
                         MenuItem("Settings", Icons.Rounded.Settings) { vm.push(Screen.Settings) },
                     ),
                 )
@@ -331,25 +359,21 @@ fun InboxScreen(vm: AppViewModel) {
                         .padding(bottom = 10.dp)
                         .fillMaxWidth()
                         .glass(haze, CircleShape)
-                        .padding(5.dp),
+                        .padding(vertical = 5.dp),
                 ) {
-                    LiquidSegmentedControl(
-                        options = FILTERS,
+                    FilterChips(
                         selected = filter,
                         onSelect = { i ->
                             filter = i
-                            // Let the thumb finish its slide before the strip tucks away.
                             scope.launch {
-                                delay(320)
+                                delay(260)
                                 filtersOpen = false
                             }
                         },
-                        height = 40.dp,
-                        trackColor = Color.Transparent,
-                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
+            UndoBar(vm, haze, Modifier.padding(bottom = 10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box {
                     GlassIconButton(
@@ -420,6 +444,8 @@ fun InboxScreen(vm: AppViewModel) {
 
     BackHandler(enabled = filtersOpen) { filtersOpen = false }
 
+    if (cleaning) CleanerDialog(vm) { cleaning = false }
+
     pendingDelete?.let { c ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
@@ -447,7 +473,7 @@ fun SignTitle(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ConversationRow(c: Conversation, onClick: () -> Unit, onLongClick: () -> Unit, onCopyCode: (String) -> Unit) {
+private fun ConversationRow(c: Conversation, onClick: () -> Unit, onLongClick: () -> Unit, muted: Boolean, onCopyCode: (String) -> Unit) {
     val p = LocalPalette.current
     val otpFresh = c.otp != null && System.currentTimeMillis() < c.latest.date + c.otp.validForMillis
     Column(Modifier.fillMaxWidth().background(p.background).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
@@ -465,8 +491,13 @@ private fun ConversationRow(c: Conversation, onClick: () -> Unit, onLongClick: (
                         color = p.label,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    if (muted) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.Rounded.NotificationsOff, "Muted", tint = p.tertiaryLabel, modifier = Modifier.size(15.dp))
+                    }
+                    Spacer(Modifier.weight(1f))
                     Text(Times.listLabel(c.latest.date), style = IosType.subhead, color = p.secondaryLabel)
                     Icon(Icons.Rounded.ChevronRight, null, tint = p.tertiaryLabel, modifier = Modifier.size(18.dp))
                 }
@@ -495,6 +526,39 @@ private fun ConversationRow(c: Conversation, onClick: () -> Unit, onLongClick: (
             }
         }
         HorizontalDivider(Modifier.padding(start = 80.dp), thickness = 0.5.dp, color = p.separator)
+    }
+}
+
+/** Scrollable category chips; the selected one fills with a springy pop. */
+@Composable
+private fun FilterChips(selected: Int, onSelect: (Int) -> Unit) {
+    val p = LocalPalette.current
+    val state = rememberLazyListState()
+    LaunchedEffect(Unit) { state.scrollToItem((selected - 1).coerceAtLeast(0)) }
+    LazyRow(
+        state = state,
+        contentPadding = PaddingValues(horizontal = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        itemsIndexed(FILTERS) { i, label ->
+            val on = i == selected
+            val scale by animateFloatAsState(if (on) 1f else 0.94f, spring(dampingRatio = 0.5f, stiffness = 600f), label = "chip")
+            val bg by animateColorAsState(if (on) p.accent else Color.Transparent, label = "chipBg")
+            Box(
+                Modifier
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                    .clip(CircleShape)
+                    .background(bg)
+                    .clickable { onSelect(i) }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+                Text(label, style = IosType.subhead, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium, color = if (on) Color.White else p.label)
+            }
+        }
     }
 }
 
@@ -568,6 +632,7 @@ private fun SwipeActionRow(
     right: SwipeAction,
     left: SwipeAction,
     isUnread: Boolean,
+    isArchived: Boolean,
     /** True when the action makes the row disappear, so it should fly off instead of snapping back. */
     removesRow: (SwipeAction) -> Boolean,
     onAction: (SwipeAction) -> Unit,
@@ -609,6 +674,7 @@ private fun SwipeActionRow(
         if (action != SwipeAction.None && !committed) {
             val color = when (action) {
                 SwipeAction.Delete -> p.red
+                SwipeAction.Archive -> p.green
                 else -> p.accent
             }
             val bg by animateColorAsState(if (armed) color else p.fill.copy(alpha = 1f), label = "swipeBg")
@@ -631,6 +697,7 @@ private fun SwipeActionRow(
                 ) {
                     val (icon, label) = when (action) {
                         SwipeAction.Delete -> Icons.Rounded.Delete to "Delete"
+                        SwipeAction.Archive -> if (isArchived) Icons.Rounded.Unarchive to "Unarchive" else Icons.Rounded.Archive to "Archive"
                         else -> if (isUnread) Icons.Rounded.MarkChatRead to "Read" else Icons.Rounded.MarkChatUnread to "Unread"
                     }
                     Icon(icon, null, tint = Color.White)

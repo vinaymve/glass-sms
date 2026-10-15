@@ -2,6 +2,12 @@ package com.glasssms.ui.screens
 
 import androidx.compose.foundation.background
 import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.compose.material.icons.rounded.WarningAmber
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
+import com.glasssms.otp.CodeActions
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
@@ -54,6 +60,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -105,6 +112,20 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     var selecting by remember { mutableStateOf<Message?>(null) }
     var pendingDelete by remember { mutableStateOf<Message?>(null) }
+    var openingUrl by remember { mutableStateOf<String?>(null) }
+
+    fun onLink(target: LinkTarget) {
+        when (target) {
+            is LinkTarget.Url -> openingUrl = target.url
+            is LinkTarget.Phone -> context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + target.number.filter { it.isDigit() || it == '+' })))
+            is LinkTarget.Email -> context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + target.address)))
+            is LinkTarget.Upi -> {
+                // Never open payment apps straight from an SMS; copying lets the user check first.
+                CodeActions.copy(context, target.id)
+                Toast.makeText(context, "UPI ID copied", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
     val listState = rememberLazyListState()
     val insets = WindowInsets.systemBars.asPaddingValues()
     val newestFirst = remember(messages) { messages.asReversed() }
@@ -151,6 +172,7 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
                         tail = tail,
                         onCopyCode = { code -> vm.copyCode(code, m.id) },
                         onSelectText = { selecting = m },
+                        onLink = ::onLink,
                         onForward = { vm.openNewMessage(body = m.body) },
                         onDelete = { if (settings.confirmDelete) pendingDelete = m else vm.deleteMessages(listOf(m.id)) },
                     )
@@ -179,19 +201,23 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
             }
         }
 
-        GlassInputBar(
-            text = draft,
-            onTextChange = { draft = it },
-            onSend = {
-                vm.send(peer, draft)
-                draft = ""
-            },
-            haze = haze,
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
+        Column(Modifier.align(Alignment.BottomCenter)) {
+            UndoBar(vm, haze, Modifier.padding(horizontal = 12.dp))
+            GlassInputBar(
+                text = draft,
+                onTextChange = { draft = it },
+                onSend = {
+                    vm.send(peer, draft)
+                    draft = ""
+                },
+                haze = haze,
+            )
+        }
     }
 
     selecting?.let { m -> SelectTextDialog(m.body) { selecting = null } }
+
+    openingUrl?.let { url -> LinkSheet(url) { openingUrl = null } }
 
     pendingDelete?.let { m ->
         AlertDialog(
@@ -214,6 +240,7 @@ private fun MessageBubble(
     tail: Boolean,
     onCopyCode: (String) -> Unit,
     onSelectText: () -> Unit,
+    onLink: (LinkTarget) -> Unit,
     onForward: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -228,6 +255,7 @@ private fun MessageBubble(
     val shape = remember(m.isOutgoing, tail) { BubbleShape(m.isOutgoing, tail) }
     val textColor = if (m.isOutgoing) Color.White else p.label
 
+    val linkHandler by rememberUpdatedState(onLink)
     val text: AnnotatedString = remember(m.body, otp) {
         buildAnnotatedString {
             if (otp == null || otp.end > m.body.length) {
@@ -238,6 +266,16 @@ private fun MessageBubble(
                     append(m.body.substring(otp.start, otp.end))
                 }
                 append(m.body.substring(otp.end))
+            }
+            Links.find(m.body).forEachIndexed { i, link ->
+                addLink(
+                    LinkAnnotation.Clickable(
+                        tag = "link$i",
+                        styles = TextLinkStyles(SpanStyle(textDecoration = TextDecoration.Underline)),
+                    ) { linkHandler(link.target) },
+                    link.start,
+                    link.end,
+                )
             }
         }
     }
@@ -305,6 +343,65 @@ private fun MessageBubble(
             }
             if (m.isFailed) {
                 Text("Not Delivered", style = IosType.caption, color = p.red, modifier = Modifier.padding(top = 2.dp, end = 8.dp))
+            }
+        }
+    }
+}
+
+/** Shows where a link really goes, with warnings for common scam patterns, before opening it. */
+@Composable
+private fun LinkSheet(url: String, onDismiss: () -> Unit) {
+    val p = LocalPalette.current
+    val context = LocalContext.current
+    val warnings = remember(url) { Links.warnings(url) }
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(p.secondaryGroupedBackground)
+                .padding(20.dp),
+        ) {
+            Text("Open link?", style = IosType.title3, color = p.label)
+            Spacer(Modifier.height(10.dp))
+            Text(Links.host(url), style = IosType.headline, color = if (warnings.isEmpty()) p.label else p.red)
+            Text(url, style = IosType.footnote, color = p.secondaryLabel, maxLines = 3)
+            warnings.forEach { w ->
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    Icon(Icons.Rounded.WarningAmber, null, tint = p.orange, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(w, style = IosType.footnote, color = p.label)
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Copy",
+                    style = IosType.body,
+                    color = p.accent,
+                    modifier = Modifier
+                        .clickable {
+                            CodeActions.copy(context, url)
+                            onDismiss()
+                        }
+                        .padding(8.dp),
+                )
+                Spacer(Modifier.weight(1f))
+                Text("Cancel", style = IosType.body, color = p.accent, modifier = Modifier.clickable(onClick = onDismiss).padding(8.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (warnings.isEmpty()) "Open" else "Open Anyway",
+                    style = IosType.body,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (warnings.isEmpty()) p.accent else p.red,
+                    modifier = Modifier
+                        .clickable {
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Links.uriFor(url))) }
+                            onDismiss()
+                        }
+                        .padding(8.dp),
+                )
             }
         }
     }

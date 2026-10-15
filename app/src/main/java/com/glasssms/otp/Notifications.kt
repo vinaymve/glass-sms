@@ -4,11 +4,13 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import com.glasssms.MainActivity
 import com.glasssms.R
+import com.glasssms.sms.NotificationActionReceiver
 
 object Notifications {
     private const val CHANNEL_MESSAGES = "messages"
@@ -38,9 +40,43 @@ object Notifications {
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setContentIntent(openThread(context, threadId, address))
+            .addAction(replyAction(context, threadId, address))
+            .addAction(markReadAction(context, threadId))
             .setAutoCancel(true)
             .build()
         notify(context, idFor(threadId), n)
+    }
+
+    private fun replyAction(context: Context, threadId: Long, address: String): Notification.Action {
+        val input = RemoteInput.Builder(NotificationActionReceiver.KEY_REPLY).setLabel("Reply").build()
+        // RemoteInput needs a mutable PendingIntent so the system can attach the typed text.
+        val pi = PendingIntent.getBroadcast(
+            context,
+            idFor(threadId) * 10 + 1,
+            Intent(context, NotificationActionReceiver::class.java)
+                .setAction(NotificationActionReceiver.ACTION_REPLY)
+                .putExtra(NotificationActionReceiver.EXTRA_THREAD_ID, threadId)
+                .putExtra(NotificationActionReceiver.EXTRA_ADDRESS, address),
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(null as Icon?, "Reply", pi)
+            .addRemoteInput(input)
+            .setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY)
+            .build()
+    }
+
+    private fun markReadAction(context: Context, threadId: Long): Notification.Action {
+        val pi = PendingIntent.getBroadcast(
+            context,
+            idFor(threadId) * 10 + 2,
+            Intent(context, NotificationActionReceiver::class.java)
+                .setAction(NotificationActionReceiver.ACTION_MARK_READ)
+                .putExtra(NotificationActionReceiver.EXTRA_THREAD_ID, threadId),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(null as Icon?, "Mark as Read", pi)
+            .setSemanticAction(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ)
+            .build()
     }
 
     fun showCode(context: Context, threadId: Long, messageId: Long, address: String, title: String, otp: Otp, body: String) {
@@ -69,6 +105,7 @@ object Notifications {
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setContentIntent(openThread(context, threadId, address))
             .addAction(Notification.Action.Builder(null as Icon?, "Copy ${otp.code}", copy).build())
+            .addAction(markReadAction(context, threadId))
             .setTimeoutAfter(otp.validForMillis)
             .setPublicVersion(public)
             .setAutoCancel(true)

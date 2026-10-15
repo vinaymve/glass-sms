@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.conflate
 class SmsRepository(private val context: Context) {
     private val resolver = context.contentResolver
     val contacts = ContactResolver(context)
+    val local = LocalStore(context)
 
     /** Emits once immediately, then whenever the SMS provider changes. */
     fun changes(): Flow<Unit> = callbackFlow {
@@ -60,9 +61,10 @@ class SmsRepository(private val context: Context) {
                 displayName = name ?: ContactResolver.formatAddress(m.address),
                 isKnown = name != null,
                 latest = m,
+                category = Category.Personal,
                 unreadCount = acc.unread,
                 otp = if (m.isOutgoing) null else OtpParser.parse(m.body, m.address),
-            )
+            ).let { c -> c.copy(category = Categorizer.categorize(m.address, m.body, c.otp)) }
         }
     }
 
@@ -175,10 +177,106 @@ class SmsRepository(private val context: Context) {
         }
     }
 
-    fun deleteThread(threadId: Long) {
-        runCatching { resolver.delete(Sms.CONTENT_URI, "${Sms.THREAD_ID} = ?", arrayOf(threadId.toString())) }
+    // --- Recently Deleted -----------------------------------------------------------------
+
+    /** Moves a whole conversation to the bin. Returns the batch id for Undo, or null if nothing moved. */
+    fun trashThread(threadId: Long): Long? = trash(loadMessages(threadId))
+
+    /** Moves single messages to the bin. */
+    fun trashMessages(ids: Collection<Long>): Long? = trash(loadByIds(ids))
+
+    private fun trash(messages: List<Message>): Long? {
+        if (messages.isEmpty()) return null
+        val batch = System.nanoTime()
+        local.insert(LocalStore.TRASH, messages, batch)
+        deleteMessages(messages.map { it.id })
+        return batch
     }
 
+    fun restoreBatch(batch: Long) = restore(LocalStore.TRASH, local.byBatch(LocalStore.TRASH, batch))
+
+    fun restoreTrash(items: List<StoredMessage>) = restore(LocalStore.TRASH, items)
+
+    fun deleteFromTrash(ids: Collection<Long>) = local.delete(LocalStore.TRASH, ids)
+
+    fun emptyTrash() = local.clear(LocalStore.TRASH)
+
+    fun trashed(): List<StoredMessage> = local.all(LocalStore.TRASH)
+
+    fun purgeTrash(maxAgeMillis: Long) = local.deleteOlderThan(LocalStore.TRASH, System.currentTimeMillis() - maxAgeMillis)
+
+    // --- Spam --------------------------------------------------------------------------------
+
+    /** A blocked incoming SMS never reaches the system inbox; it waits here instead. */
+    fun storeSpam(address: String, body: String, date: Long, reason: String) {
+        local.insert(
+            LocalStore.SPAM,
+            listOf(Message(0, 0, address, body, date, Sms.MESSAGE_TYPE_INBOX, read = false)),
+            batch = date,
+            reason = reason,
+        )
+    }
+
+    fun moveThreadToSpam(threadId: Long, reason: String) {
+        val messages = loadMessages(threadId)
+        if (messages.isEmpty()) return
+        local.insert(LocalStore.SPAM, messages, System.nanoTime(), reason)
+        deleteMessages(messages.map { it.id })
+    }
+
+    fun spam(): List<StoredMessage> = local.all(LocalStore.SPAM)
+
+    fun restoreSpam(items: List<StoredMessage>) = restore(LocalStore.SPAM, items)
+
+    fun deleteSpam(ids: Collection<Long>) = local.delete(LocalStore.SPAM, ids)
+
+    private fun restore(table: String, items: List<StoredMessage>) {
+        items.forEach { m ->
+            val values = ContentValues().apply {
+                put(Sms.ADDRESS, m.address)
+                put(Sms.BODY, m.body)
+                put(Sms.DATE, m.date)
+                put(Sms.TYPE, m.type)
+                put(Sms.READ, if (m.read) 1 else 0)
+                put(Sms.SEEN, 1)
+                if (m.subId >= 0) put(Sms.SUBSCRIPTION_ID, m.subId)
+            }
+            runCatching { resolver.insert(Sms.CONTENT_URI, values) }
+        }
+        local.delete(table, items.map { it.id })
+    }
+
+    // --- Inbox cleaner -----------------------------------------------------------------------
+
+    /** Incoming code and offer messages older than the given ages (null = skip that kind). */
+    fun findCleanable(otpOlderThan: Long?, offersOlderThan: Long?): List<Message> {
+        val now = System.currentTimeMillis()
+        val out = ArrayList<Message>()
+        query(Sms.CONTENT_URI, "${Sms.TYPE} = ?", arrayOf(Sms.MESSAGE_TYPE_INBOX.toString()), "${Sms.DATE} DESC") { c ->
+            val m = c.toMessage()
+            val age = now - m.date
+            val otp = OtpParser.parse(m.body, m.address)
+            val category = Categorizer.categorize(m.address, m.body, otp)
+            val match = (category == Category.Otps && otpOlderThan != null && age > otpOlderThan) ||
+                (category == Category.Offers && offersOlderThan != null && age > offersOlderThan)
+            if (match) out += m
+        }
+        return out
+    }
+
+    fun trashAll(messages: List<Message>): Long? = trash(messages)
+
+    private fun loadByIds(ids: Collection<Long>): List<Message> {
+        if (ids.isEmpty()) return emptyList()
+        val out = ArrayList<Message>()
+        ids.chunked(200).forEach { chunk ->
+            val where = "${Sms._ID} IN (${chunk.joinToString(",") { "?" }})"
+            query(Sms.CONTENT_URI, where, chunk.map { it.toString() }.toTypedArray(), "${Sms.DATE} ASC") { c -> out += c.toMessage() }
+        }
+        return out
+    }
+
+    /** Permanent delete, for auto-cleanup of codes and items already copied to the bin or spam. */
     fun deleteMessages(ids: Collection<Long>) {
         ids.forEach { id -> runCatching { resolver.delete(ContentUris.withAppendedId(Sms.CONTENT_URI, id), null, null) } }
     }

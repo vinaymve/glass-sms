@@ -7,11 +7,14 @@ import androidx.lifecycle.viewModelScope
 import com.glasssms.data.Conversation
 import com.glasssms.data.Message
 import com.glasssms.data.OtpEntry
+import com.glasssms.data.Categorizer
 import com.glasssms.data.Settings
+import com.glasssms.data.StoredMessage
 import com.glasssms.otp.CodeActions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOn
@@ -29,7 +32,13 @@ sealed interface Screen {
     data class NewMessage(val address: String = "", val body: String = "") : Screen
     data object Codes : Screen
     data object Settings : Screen
+    data object Trash : Screen
+    data object Spam : Screen
+    data object Blocked : Screen
 }
+
+/** Something that just happened and can be reversed from the snackbar for a few seconds. */
+data class UndoEvent(val id: Long, val label: String, val undo: () -> Unit)
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val ctx = application
@@ -53,6 +62,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         .map { repo.recentCodes(System.currentTimeMillis() - TimeUnit.HOURS.toMillis(24)) }
         .flowOn(Dispatchers.IO)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Bin and spam live in the app's own database, so they refresh off both kinds of change. */
+    val trash: StateFlow<List<StoredMessage>> = changes
+        .map { repo.trashed() }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val spam: StateFlow<List<StoredMessage>> = changes
+        .map { repo.spam() }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _undo = MutableStateFlow<UndoEvent?>(null)
+    val undo: StateFlow<UndoEvent?> = _undo
+
+    fun dismissUndo(id: Long) {
+        if (_undo.value?.id == id) _undo.value = null
+    }
+
+    private fun offerUndo(label: String, undo: () -> Unit) {
+        _undo.value = UndoEvent(System.nanoTime(), label, undo)
+    }
+
+    init {
+        // Recently Deleted keeps things for 30 days.
+        viewModelScope.launch(Dispatchers.IO) { repo.purgeTrash(TimeUnit.DAYS.toMillis(30)) }
+    }
 
     fun messages(threadId: Long): Flow<List<Message>> = changes
         .map { repo.loadMessages(threadId) }
@@ -129,11 +165,101 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteThread(threadId: Long) = viewModelScope.launch(Dispatchers.IO) {
-        repo.deleteThread(threadId)
+        val batch = repo.trashThread(threadId)
         if (threadId in settings.value.pinnedThreads) settingsStore.update { it.copy(pinnedThreads = it.pinnedThreads - threadId) }
+        bump()
+        if (batch != null) offerUndo("Conversation deleted") { restoreBatch(batch) }
     }
 
-    fun deleteMessages(ids: Collection<Long>) = viewModelScope.launch(Dispatchers.IO) { repo.deleteMessages(ids) }
+    fun deleteMessages(ids: Collection<Long>) = viewModelScope.launch(Dispatchers.IO) {
+        val batch = repo.trashMessages(ids)
+        bump()
+        if (batch != null) offerUndo(if (ids.size == 1) "Message deleted" else "${ids.size} messages deleted") { restoreBatch(batch) }
+    }
+
+    private fun restoreBatch(batch: Long) = viewModelScope.launch(Dispatchers.IO) {
+        repo.restoreBatch(batch)
+        bump()
+    }
+
+    fun restoreTrash(items: List<StoredMessage>) = viewModelScope.launch(Dispatchers.IO) {
+        repo.restoreTrash(items)
+        bump()
+    }
+
+    fun deleteFromTrash(items: List<StoredMessage>) = viewModelScope.launch(Dispatchers.IO) {
+        repo.deleteFromTrash(items.map { it.id })
+        bump()
+    }
+
+    fun emptyTrash() = viewModelScope.launch(Dispatchers.IO) {
+        repo.emptyTrash()
+        bump()
+    }
+
+    // --- Mute, archive, spam -------------------------------------------------------------------
+
+    fun toggleMute(threadId: Long) = updateSettings { s ->
+        s.copy(mutedThreads = if (threadId in s.mutedThreads) s.mutedThreads - threadId else s.mutedThreads + threadId)
+    }
+
+    fun toggleArchive(threadId: Long) {
+        val archiving = threadId !in settings.value.archivedThreads
+        updateSettings { s ->
+            s.copy(archivedThreads = if (archiving) s.archivedThreads + threadId else s.archivedThreads - threadId)
+        }
+        if (archiving) offerUndo("Conversation archived") { toggleArchive(threadId) }
+    }
+
+    /** Blocks the sender and moves the whole conversation to Spam. */
+    fun blockAndReport(c: Conversation) = viewModelScope.launch(Dispatchers.IO) {
+        val key = Categorizer.senderKey(c.address)
+        settingsStore.update { it.copy(blockedSenders = it.blockedSenders + key, pinnedThreads = it.pinnedThreads - c.threadId) }
+        repo.moveThreadToSpam(c.threadId, "Reported by you")
+        bump()
+    }
+
+    fun unblock(key: String) = updateSettings { it.copy(blockedSenders = it.blockedSenders - key) }
+
+    fun blockSender(address: String) = updateSettings {
+        it.copy(blockedSenders = it.blockedSenders + Categorizer.senderKey(address))
+    }
+
+    fun addBlockedKeyword(word: String) {
+        val w = word.trim()
+        if (w.isNotEmpty()) updateSettings { it.copy(blockedKeywords = it.blockedKeywords + w) }
+    }
+
+    fun removeBlockedKeyword(word: String) = updateSettings { it.copy(blockedKeywords = it.blockedKeywords - word) }
+
+    /** "Not spam": puts the messages back in the inbox and unblocks the sender. */
+    fun notSpam(items: List<StoredMessage>) = viewModelScope.launch(Dispatchers.IO) {
+        val keys = items.map { Categorizer.senderKey(it.address) }.toSet()
+        settingsStore.update { it.copy(blockedSenders = it.blockedSenders - keys) }
+        repo.restoreSpam(items)
+        bump()
+    }
+
+    fun deleteSpam(items: List<StoredMessage>) = viewModelScope.launch(Dispatchers.IO) {
+        repo.deleteSpam(items.map { it.id })
+        bump()
+    }
+
+    // --- Inbox cleaner -------------------------------------------------------------------------
+
+    suspend fun findCleanable(otpAgeDays: Int?, offerAgeDays: Int?) = withContext(Dispatchers.IO) {
+        repo.findCleanable(otpAgeDays?.let { TimeUnit.DAYS.toMillis(it.toLong()) }, offerAgeDays?.let { TimeUnit.DAYS.toMillis(it.toLong()) })
+    }
+
+    fun clean(messages: List<Message>) = viewModelScope.launch(Dispatchers.IO) {
+        val batch = repo.trashAll(messages)
+        bump()
+        if (batch != null) offerUndo("${messages.size} messages cleaned up") { restoreBatch(batch) }
+    }
+
+    private fun bump() {
+        manualRefresh.tryEmit(Unit)
+    }
 
     fun copyCode(code: String, messageId: Long) = viewModelScope.launch {
         CodeActions.copyAndMaybeCleanUp(ctx, code, messageId)
