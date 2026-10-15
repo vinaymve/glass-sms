@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -25,6 +26,7 @@ data class Settings(
     val swipeRight: SwipeAction = SwipeAction.ToggleRead,
     val swipeLeft: SwipeAction = SwipeAction.Delete,
     val deleteExplosion: Boolean = true,
+    val pinnedThreads: Set<Long> = emptySet(),
 ) {
     companion object {
         const val AUTO_DELETE_AT_EXPIRY = -1
@@ -45,6 +47,7 @@ class SettingsStore(private val context: Context) {
         val swipeRight = stringPreferencesKey("swipe_right")
         val swipeLeft = stringPreferencesKey("swipe_left")
         val deleteExplosion = booleanPreferencesKey("delete_explosion")
+        val pinned = stringSetPreferencesKey("pinned_threads")
     }
 
     val flow: Flow<Settings> = context.dataStore.data.map(::fromPrefs)
@@ -62,6 +65,7 @@ class SettingsStore(private val context: Context) {
             swipeRight = p[Keys.swipeRight].toSwipeAction() ?: d.swipeRight,
             swipeLeft = p[Keys.swipeLeft].toSwipeAction() ?: d.swipeLeft,
             deleteExplosion = p[Keys.deleteExplosion] ?: d.deleteExplosion,
+            pinnedThreads = p[Keys.pinned]?.mapNotNull { it.toLongOrNull() }?.toSet() ?: d.pinnedThreads,
         )
     }
 
@@ -82,6 +86,7 @@ class SettingsStore(private val context: Context) {
             p[Keys.swipeRight] = s.swipeRight.name
             p[Keys.swipeLeft] = s.swipeLeft.name
             p[Keys.deleteExplosion] = s.deleteExplosion
+            p[Keys.pinned] = s.pinnedThreads.map { it.toString() }.toSet()
         }
     }
 }

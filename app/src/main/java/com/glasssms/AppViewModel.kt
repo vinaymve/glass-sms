@@ -118,11 +118,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun markRead(threadId: Long) = viewModelScope.launch(Dispatchers.IO) { repo.markRead(threadId) }
 
+    fun markAllRead() = viewModelScope.launch(Dispatchers.IO) { repo.markAllRead() }
+
+    fun togglePin(threadId: Long) = updateSettings { s ->
+        s.copy(pinnedThreads = if (threadId in s.pinnedThreads) s.pinnedThreads - threadId else s.pinnedThreads + threadId)
+    }
+
     fun toggleRead(c: Conversation) = viewModelScope.launch(Dispatchers.IO) {
         if (c.unreadCount > 0) repo.markRead(c.threadId) else repo.markUnread(c.threadId)
     }
 
-    fun deleteThread(threadId: Long) = viewModelScope.launch(Dispatchers.IO) { repo.deleteThread(threadId) }
+    fun deleteThread(threadId: Long) = viewModelScope.launch(Dispatchers.IO) {
+        repo.deleteThread(threadId)
+        if (threadId in settings.value.pinnedThreads) settingsStore.update { it.copy(pinnedThreads = it.pinnedThreads - threadId) }
+    }
 
     fun deleteMessages(ids: Collection<Long>) = viewModelScope.launch(Dispatchers.IO) { repo.deleteMessages(ids) }
 

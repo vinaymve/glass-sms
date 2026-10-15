@@ -152,6 +152,14 @@ class SmsRepository(private val context: Context) {
         }
     }
 
+    fun markAllRead() {
+        val values = ContentValues().apply {
+            put(Sms.READ, 1)
+            put(Sms.SEEN, 1)
+        }
+        runCatching { resolver.update(Sms.CONTENT_URI, values, "${Sms.READ} = 0", null) }
+    }
+
     /** Marks the newest incoming message unread, which is how the thread shows as unread. */
     fun markUnread(threadId: Long) {
         var latestId: Long? = null

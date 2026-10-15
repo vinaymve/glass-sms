@@ -1,6 +1,14 @@
 package com.glasssms.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.rounded.DoneAll
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.PushPin
+import com.glasssms.ui.glass.GlassMenu
+import com.glasssms.ui.glass.MenuItem
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.AnimationSpec
@@ -140,7 +148,13 @@ fun InboxScreen(vm: AppViewModel) {
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
     }
     val listState = rememberLazyListState()
-    val collapsed by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 60 } }
+    var menuOpen by remember { mutableStateOf(false) }
+    // Thread whose long-press menu is showing.
+    var menuFor by remember { mutableStateOf<Long?>(null) }
+
+    fun requestDelete(c: Conversation) {
+        if (settings.confirmDelete) pendingDelete = c else delete(c.threadId)
+    }
     val insets = WindowInsets.systemBars.asPaddingValues()
     val now = System.currentTimeMillis()
     val activeCodes = codes.count { it.isActive(now) }
@@ -159,17 +173,61 @@ fun InboxScreen(vm: AppViewModel) {
         }
     }
 
+    val showPins = filter == 0 && query.isBlank()
+    val pinned = if (showPins) visible.filter { it.threadId in settings.pinnedThreads } else emptyList()
+    val rows = if (pinned.isEmpty()) visible else visible.filter { it.threadId !in settings.pinnedThreads }
+
+    @Composable
+    fun ConversationMenu(c: Conversation) {
+        val isPinned = c.threadId in settings.pinnedThreads
+        GlassMenu(
+            expanded = menuFor == c.threadId,
+            onDismiss = { menuFor = null },
+            items = listOf(
+                MenuItem(if (isPinned) "Unpin" else "Pin", if (isPinned) Icons.Rounded.PushPin else Icons.Outlined.PushPin) {
+                    vm.togglePin(c.threadId)
+                },
+                if (c.unreadCount > 0) MenuItem("Mark as Read", Icons.Rounded.MarkChatRead) { vm.toggleRead(c) }
+                else MenuItem("Mark as Unread", Icons.Rounded.MarkChatUnread) { vm.toggleRead(c) },
+                MenuItem("Delete", Icons.Rounded.Delete, destructive = true) { requestDelete(c) },
+            ),
+        )
+    }
+
+    fun openMenu(c: Conversation) {
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        menuFor = c.threadId
+    }
+
     Box(Modifier.fillMaxSize().background(p.background)) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().hazeSource(haze),
-            contentPadding = PaddingValues(top = insets.calculateTopPadding() + 56.dp, bottom = insets.calculateBottomPadding() + if (filtersOpen) 156.dp else 96.dp),
+            contentPadding = PaddingValues(top = insets.calculateTopPadding() + 60.dp, bottom = insets.calculateBottomPadding() + if (filtersOpen) 156.dp else 96.dp),
         ) {
-            item { SignTitle("Messages") }
+            if (pinned.isNotEmpty()) {
+                item(key = "pins") {
+                    Column(Modifier.padding(horizontal = 8.dp)) {
+                        pinned.chunked(3).forEach { line ->
+                            Row(Modifier.fillMaxWidth()) {
+                                line.forEach { c ->
+                                    Box(Modifier.weight(1f).onPlaced { rowCoords[c.threadId] = it }) {
+                                        PinnedTile(c, onClick = { vm.openThread(c.threadId, c.address) }, onLongClick = { openMenu(c) })
+                                        ConversationMenu(c)
+                                    }
+                                }
+                                repeat(3 - line.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(top = 6.dp), thickness = 0.5.dp, color = p.separator)
+                }
+            }
             when {
                 conversations == null -> Unit
                 visible.isEmpty() -> item { EmptyInbox(filtered = query.isNotBlank() || filter != 0) }
-                else -> items(visible, key = { it.threadId }) { c ->
+                else -> items(rows, key = { it.threadId }) { c ->
+                  Box {
                     SwipeActionRow(
                         modifier = Modifier.onPlaced { rowCoords[c.threadId] = it },
                         right = settings.swipeRight,
@@ -179,7 +237,7 @@ fun InboxScreen(vm: AppViewModel) {
                         onAction = { action ->
                             when (action) {
                                 SwipeAction.ToggleRead -> vm.toggleRead(c)
-                                SwipeAction.Delete -> if (settings.confirmDelete) pendingDelete = c else delete(c.threadId)
+                                SwipeAction.Delete -> requestDelete(c)
                                 SwipeAction.None -> Unit
                             }
                         },
@@ -187,9 +245,12 @@ fun InboxScreen(vm: AppViewModel) {
                         ConversationRow(
                             c = c,
                             onClick = { vm.openThread(c.threadId, c.address) },
+                            onLongClick = { openMenu(c) },
                             onCopyCode = { vm.copyCode(it, c.latest.id) },
                         )
                     }
+                    ConversationMenu(c)
+                  }
                 }
             }
         }
@@ -197,19 +258,27 @@ fun InboxScreen(vm: AppViewModel) {
         // Status-bar scroll edge
         Box(Modifier.fillMaxWidth().height(insets.calculateTopPadding() + 64.dp).edgeBlur(haze))
 
-        // Top bar
+        // Top bar: the active filter (if any) on the left, one overflow menu on the right.
         Box(
             Modifier
                 .fillMaxWidth()
                 .padding(top = insets.calculateTopPadding() + 6.dp, start = 16.dp, end = 16.dp)
                 .height(44.dp),
         ) {
-            GlassIconButton(Icons.Rounded.Settings, "Settings", haze, onClick = { vm.push(Screen.Settings) }, modifier = Modifier.align(Alignment.CenterStart))
-            AnimatedVisibility(collapsed, Modifier.align(Alignment.Center), enter = fadeIn(), exit = fadeOut()) {
-                GlassCapsule(haze) { Text("Messages", style = IosType.headline, color = p.label) }
+            AnimatedVisibility(
+                filter != 0,
+                Modifier.align(Alignment.CenterStart),
+                enter = scaleIn(spring(dampingRatio = 0.6f, stiffness = 600f), initialScale = 0.6f, transformOrigin = TransformOrigin(0f, 0.5f)) + fadeIn(),
+                exit = scaleOut(targetScale = 0.6f, transformOrigin = TransformOrigin(0f, 0.5f)) + fadeOut(),
+            ) {
+                GlassCapsule(haze, onClick = { filter = 0 }) {
+                    Text(FILTERS.getOrElse(filter) { "" }, style = IosType.headline, color = p.label)
+                    Spacer(Modifier.width(8.dp))
+                    Icon(Icons.Rounded.Close, "Clear filter", tint = p.secondaryLabel, modifier = Modifier.size(16.dp))
+                }
             }
             Box(Modifier.align(Alignment.CenterEnd)) {
-                GlassIconButton(Icons.Rounded.Key, "Verification codes", haze, onClick = { vm.push(Screen.Codes) }, iconTint = p.accent)
+                GlassIconButton(Icons.Rounded.MoreHoriz, "Menu", haze, onClick = { menuOpen = true })
                 if (activeCodes > 0) {
                     Box(
                         Modifier
@@ -221,6 +290,18 @@ fun InboxScreen(vm: AppViewModel) {
                         contentAlignment = Alignment.Center,
                     ) { Text("$activeCodes", style = IosType.caption2, color = Color.White, fontWeight = FontWeight.Bold) }
                 }
+                GlassMenu(
+                    expanded = menuOpen,
+                    onDismiss = { menuOpen = false },
+                    alignEnd = true,
+                    items = listOf(
+                        MenuItem(if (activeCodes > 0) "Codes · $activeCodes active" else "Verification Codes", Icons.Rounded.Key) {
+                            vm.push(Screen.Codes)
+                        },
+                        MenuItem("Mark All as Read", Icons.Rounded.DoneAll) { vm.markAllRead() },
+                        MenuItem("Settings", Icons.Rounded.Settings) { vm.push(Screen.Settings) },
+                    ),
+                )
             }
         }
 
@@ -366,10 +447,10 @@ fun SignTitle(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ConversationRow(c: Conversation, onClick: () -> Unit, onCopyCode: (String) -> Unit) {
+private fun ConversationRow(c: Conversation, onClick: () -> Unit, onLongClick: () -> Unit, onCopyCode: (String) -> Unit) {
     val p = LocalPalette.current
     val otpFresh = c.otp != null && System.currentTimeMillis() < c.latest.date + c.otp.validForMillis
-    Column(Modifier.fillMaxWidth().background(p.background).clickable(onClick = onClick)) {
+    Column(Modifier.fillMaxWidth().background(p.background).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Row(Modifier.padding(start = 4.dp, end = 16.dp, top = 10.dp, bottom = 10.dp)) {
             Box(Modifier.width(16.dp).height(48.dp), contentAlignment = Alignment.Center) {
                 if (c.unreadCount > 0) Box(Modifier.size(10.dp).clip(CircleShape).background(p.accent))
@@ -414,6 +495,46 @@ private fun ConversationRow(c: Conversation, onClick: () -> Unit, onCopyCode: (S
             }
         }
         HorizontalDivider(Modifier.padding(start = 80.dp), thickness = 0.5.dp, color = p.separator)
+    }
+}
+
+/** iOS-style pinned conversation: big avatar, name underneath, unread dot on the shoulder. */
+@Composable
+private fun PinnedTile(c: Conversation, onClick: () -> Unit, onLongClick: () -> Unit) {
+    val p = LocalPalette.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box {
+            Avatar(c.displayName, size = 72.dp)
+            if (c.unreadCount > 0) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(p.background)
+                        .padding(3.dp)
+                        .clip(CircleShape)
+                        .background(p.accent),
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            c.displayName,
+            style = IosType.footnote,
+            fontWeight = if (c.unreadCount > 0) FontWeight.SemiBold else FontWeight.Normal,
+            color = p.label,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        )
     }
 }
 

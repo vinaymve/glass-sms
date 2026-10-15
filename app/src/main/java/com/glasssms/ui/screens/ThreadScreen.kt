@@ -1,6 +1,29 @@
 package com.glasssms.ui.screens
 
 import androidx.compose.foundation.background
+import android.content.Intent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.rounded.Forward
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.TextFields
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.window.Dialog
+import com.glasssms.ui.glass.GlassMenu
+import com.glasssms.ui.glass.MenuItem
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,8 +47,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBackIos
 import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -81,6 +102,9 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
         value = withContext(Dispatchers.IO) { vm.displayName(peer) }
     }
     var draft by rememberSaveable(threadId) { mutableStateOf("") }
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    var selecting by remember { mutableStateOf<Message?>(null) }
+    var pendingDelete by remember { mutableStateOf<Message?>(null) }
     val listState = rememberLazyListState()
     val insets = WindowInsets.systemBars.asPaddingValues()
     val newestFirst = remember(messages) { messages.asReversed() }
@@ -126,7 +150,9 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
                         m = m,
                         tail = tail,
                         onCopyCode = { code -> vm.copyCode(code, m.id) },
-                        onDelete = { vm.deleteMessages(listOf(m.id)) },
+                        onSelectText = { selecting = m },
+                        onForward = { vm.openNewMessage(body = m.body) },
+                        onDelete = { if (settings.confirmDelete) pendingDelete = m else vm.deleteMessages(listOf(m.id)) },
                     )
                     Spacer(Modifier.height(if (tail) 8.dp else 2.dp))
                 }
@@ -164,14 +190,41 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
+
+    selecting?.let { m -> SelectTextDialog(m.body) { selecting = null } }
+
+    pendingDelete?.let { m ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete message?", style = IosType.headline) },
+            text = { Text("This message will be permanently deleted from this phone.", style = IosType.subhead) },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteMessages(listOf(m.id)); pendingDelete = null }) {
+                    Text("Delete", color = p.red, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel", color = p.accent) } },
+        )
+    }
 }
 
 @Composable
-private fun MessageBubble(m: Message, tail: Boolean, onCopyCode: (String) -> Unit, onDelete: () -> Unit) {
+private fun MessageBubble(
+    m: Message,
+    tail: Boolean,
+    onCopyCode: (String) -> Unit,
+    onSelectText: () -> Unit,
+    onForward: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val p = LocalPalette.current
+    val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
     val otp: Otp? = remember(m.body) { if (m.isOutgoing) null else OtpParser.parse(m.body, m.address) }
     var menu by remember { mutableStateOf(false) }
+    // The bubble lifts slightly while its menu is open, like iOS.
+    val lift by animateFloatAsState(if (menu) 1.04f else 1f, spring(dampingRatio = 0.5f, stiffness = 500f), label = "lift")
     val shape = remember(m.isOutgoing, tail) { BubbleShape(m.isOutgoing, tail) }
     val textColor = if (m.isOutgoing) Color.White else p.label
 
@@ -189,6 +242,20 @@ private fun MessageBubble(m: Message, tail: Boolean, onCopyCode: (String) -> Uni
         }
     }
 
+    val items = buildList {
+        add(MenuItem("Copy", Icons.Rounded.ContentCopy) { clipboard.setText(AnnotatedString(m.body)) })
+        if (otp != null) add(MenuItem("Copy Code ${otp.pretty}", Icons.Rounded.Key) { onCopyCode(otp.code) })
+        add(MenuItem("Select Text", Icons.Rounded.TextFields, onClick = onSelectText))
+        add(
+            MenuItem("Share", Icons.Rounded.Share) {
+                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, m.body)
+                context.startActivity(Intent.createChooser(send, null))
+            },
+        )
+        add(MenuItem("Forward", Icons.AutoMirrored.Rounded.Forward, onClick = onForward))
+        add(MenuItem("Delete", Icons.Rounded.Delete, destructive = true, onClick = onDelete))
+    }
+
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (m.isOutgoing) Arrangement.End else Arrangement.Start,
@@ -203,13 +270,24 @@ private fun MessageBubble(m: Message, tail: Boolean, onCopyCode: (String) -> Uni
                 Box(
                     Modifier
                         .widthIn(max = 300.dp)
-                        .graphicsLayer { alpha = if (m.isPending) 0.6f else 1f }
+                        .graphicsLayer {
+                            alpha = if (m.isPending) 0.6f else 1f
+                            scaleX = lift
+                            scaleY = lift
+                            transformOrigin = TransformOrigin(if (m.isOutgoing) 1f else 0f, 0.5f)
+                        }
                         .clip(shape)
                         .background(
                             if (m.isOutgoing) Brush.verticalGradient(listOf(p.outgoingTop, p.outgoingBottom))
                             else Brush.verticalGradient(listOf(p.incomingBubble, p.incomingBubble)),
                         )
-                        .combinedClickable(onClick = {}, onLongClick = { menu = true })
+                        .combinedClickable(
+                            onClick = { menu = true },
+                            onLongClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                menu = true
+                            },
+                        )
                         .padding(
                             start = if (m.isOutgoing) 12.dp else 18.dp,
                             end = if (m.isOutgoing) 18.dp else 12.dp,
@@ -219,13 +297,7 @@ private fun MessageBubble(m: Message, tail: Boolean, onCopyCode: (String) -> Uni
                 ) {
                     Text(text, style = IosType.body, color = textColor)
                 }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("Copy") }, onClick = { clipboard.setText(AnnotatedString(m.body)); menu = false })
-                    if (otp != null) {
-                        DropdownMenuItem(text = { Text("Copy Code") }, onClick = { onCopyCode(otp.code); menu = false })
-                    }
-                    DropdownMenuItem(text = { Text("Delete", color = p.red) }, onClick = { onDelete(); menu = false })
-                }
+                GlassMenu(expanded = menu, onDismiss = { menu = false }, items = items, alignEnd = m.isOutgoing)
             }
             if (otp != null) {
                 Spacer(Modifier.height(4.dp))
@@ -233,6 +305,36 @@ private fun MessageBubble(m: Message, tail: Boolean, onCopyCode: (String) -> Uni
             }
             if (m.isFailed) {
                 Text("Not Delivered", style = IosType.caption, color = p.red, modifier = Modifier.padding(top = 2.dp, end = 8.dp))
+            }
+        }
+    }
+}
+
+/** Full message in a sheet where any part can be selected with the system handles. */
+@Composable
+private fun SelectTextDialog(body: String, onDismiss: () -> Unit) {
+    val p = LocalPalette.current
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(p.secondaryGroupedBackground)
+                .padding(20.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Select Text", style = IosType.headline, color = p.label, modifier = Modifier.weight(1f))
+                Text(
+                    "Done",
+                    style = IosType.body,
+                    fontWeight = FontWeight.SemiBold,
+                    color = p.accent,
+                    modifier = Modifier.clickable(onClick = onDismiss).padding(4.dp),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            SelectionContainer(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                Text(body, style = IosType.body, color = p.label)
             }
         }
     }
