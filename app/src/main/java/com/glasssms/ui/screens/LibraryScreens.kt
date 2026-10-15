@@ -413,19 +413,22 @@ fun UndoBar(vm: AppViewModel, haze: HazeState, modifier: Modifier = Modifier) {
     ) {
         val e = shown ?: return@AnimatedVisibility
         GlassCapsule(haze, Modifier.fillMaxWidth()) {
-            Text(e.label, style = IosType.subhead, color = p.label, modifier = Modifier.weight(1f))
-            Text(
-                "Undo",
-                style = IosType.body,
-                fontWeight = FontWeight.SemiBold,
-                color = p.accent,
-                modifier = Modifier
-                    .clickable {
-                        e.undo()
-                        vm.dismissUndo(e.id)
-                    }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            )
+            Text(e.label, style = IosType.subhead, color = p.label, modifier = Modifier.weight(1f), maxLines = 2)
+            val undo = e.undo
+            if (undo != null) {
+                Text(
+                    "Undo",
+                    style = IosType.body,
+                    fontWeight = FontWeight.SemiBold,
+                    color = p.accent,
+                    modifier = Modifier
+                        .clickable {
+                            undo()
+                            vm.dismissUndo(e.id)
+                        }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
         }
     }
 }

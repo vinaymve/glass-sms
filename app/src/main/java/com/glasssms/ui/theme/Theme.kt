@@ -111,6 +111,15 @@ val SubwayFont: FontFamily = FontFamily(
     Font(R.font.subway_bold_italic, FontWeight.Bold, FontStyle.Italic),
 )
 
+/**
+ * Bundled JetBrains Mono (SIL OFL, see licenses/). The platform "monospace" is remapped by some
+ * phone makers (Samsung included) to a face that isn't monospaced, so we ship our own.
+ */
+val MonoFont: FontFamily = FontFamily(
+    Font(R.font.mono_regular, FontWeight.Normal),
+    Font(R.font.mono_medium, FontWeight.Medium),
+)
+
 /** MTA route colours, used for "route bullet" avatars. Pairs of (bullet, text). */
 object Mta {
     val routes = listOf(
@@ -146,6 +155,8 @@ object IosType {
     val subhead = TextStyle(fontFamily = SubwayFont, fontSize = 15.sp, letterSpacing = (-0.23).sp, lineHeight = 20.sp)
     val footnote = TextStyle(fontFamily = SubwayFont, fontSize = 13.sp, letterSpacing = (-0.08).sp, lineHeight = 18.sp)
     val caption = TextStyle(fontFamily = SubwayFont, fontSize = 12.sp, lineHeight = 16.sp)
+    /** Timestamps in JetBrains Mono so dates line up down the list, like a departures board. */
+    val timestamp = TextStyle(fontFamily = MonoFont, fontWeight = FontWeight.Medium, fontSize = 12.sp, letterSpacing = (-0.3).sp, lineHeight = 18.sp)
     val caption2 = TextStyle(fontFamily = SubwayFont, fontSize = 11.sp, letterSpacing = 0.06.sp, lineHeight = 13.sp)
 }
 

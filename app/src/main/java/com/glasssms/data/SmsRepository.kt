@@ -186,10 +186,12 @@ class SmsRepository(private val context: Context) {
     fun trashMessages(ids: Collection<Long>): Long? = trash(loadByIds(ids))
 
     private fun trash(messages: List<Message>): Long? {
-        if (messages.isEmpty()) return null
+        // Copy only what Android actually deleted: when we're not the default SMS app deletes are
+        // silently refused, and copying first would leave the message in both places.
+        val deleted = deleteConfirmed(messages)
+        if (deleted.isEmpty()) return null
         val batch = System.nanoTime()
-        local.insert(LocalStore.TRASH, messages, batch)
-        deleteMessages(messages.map { it.id })
+        local.insert(LocalStore.TRASH, deleted, batch)
         return batch
     }
 
@@ -217,11 +219,12 @@ class SmsRepository(private val context: Context) {
         )
     }
 
-    fun moveThreadToSpam(threadId: Long, reason: String) {
-        val messages = loadMessages(threadId)
-        if (messages.isEmpty()) return
-        local.insert(LocalStore.SPAM, messages, System.nanoTime(), reason)
-        deleteMessages(messages.map { it.id })
+    /** Returns false when nothing could be moved (typically: not the default SMS app). */
+    fun moveThreadToSpam(threadId: Long, reason: String): Boolean {
+        val deleted = deleteConfirmed(loadMessages(threadId))
+        if (deleted.isEmpty()) return false
+        local.insert(LocalStore.SPAM, deleted, System.nanoTime(), reason)
+        return true
     }
 
     fun spam(): List<StoredMessage> = local.all(LocalStore.SPAM)
@@ -274,6 +277,10 @@ class SmsRepository(private val context: Context) {
             query(Sms.CONTENT_URI, where, chunk.map { it.toString() }.toTypedArray(), "${Sms.DATE} ASC") { c -> out += c.toMessage() }
         }
         return out
+    }
+
+    private fun deleteConfirmed(messages: List<Message>): List<Message> = messages.filter { m ->
+        runCatching { resolver.delete(ContentUris.withAppendedId(Sms.CONTENT_URI, m.id), null, null) > 0 }.getOrDefault(false)
     }
 
     /** Permanent delete, for auto-cleanup of codes and items already copied to the bin or spam. */

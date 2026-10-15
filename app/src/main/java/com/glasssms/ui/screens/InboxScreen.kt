@@ -507,7 +507,7 @@ private fun ConversationRow(
                         Icon(Icons.Rounded.NotificationsOff, "Muted", tint = p.tertiaryLabel, modifier = Modifier.size(15.dp))
                     }
                     Spacer(Modifier.weight(1f))
-                    Text(Times.listLabel(c.latest.date, dateStyle), style = IosType.subhead, color = p.secondaryLabel, maxLines = 1)
+                    Text(Times.listLabel(c.latest.date, dateStyle), style = IosType.timestamp, color = p.secondaryLabel, maxLines = 1)
                     Icon(Icons.Rounded.ChevronRight, null, tint = p.tertiaryLabel, modifier = Modifier.size(18.dp))
                 }
                 Spacer(Modifier.height(2.dp))

@@ -79,6 +79,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.glasssms.AppState
@@ -161,8 +162,7 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
                     if (header) {
                         Text(
                             Times.headerLabel(m.date),
-                            style = IosType.caption,
-                            fontWeight = FontWeight.Medium,
+                            style = IosType.timestamp.copy(fontSize = 11.sp),
                             color = p.secondaryLabel,
                             modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 14.dp, bottom = 8.dp),
                         )

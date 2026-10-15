@@ -38,7 +38,7 @@ sealed interface Screen {
 }
 
 /** Something that just happened and can be reversed from the snackbar for a few seconds. */
-data class UndoEvent(val id: Long, val label: String, val undo: () -> Unit)
+data class UndoEvent(val id: Long, val label: String, val undo: (() -> Unit)?)
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val ctx = application
@@ -84,6 +84,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun offerUndo(label: String, undo: () -> Unit) {
         _undo.value = UndoEvent(System.nanoTime(), label, undo)
     }
+
+    /** A plain notice in the same bar, without an Undo button. */
+    private fun notice(label: String) {
+        _undo.value = UndoEvent(System.nanoTime(), label, null)
+    }
+
+    private fun notDefaultNotice() = notice("Set Glass SMS as your default SMS app to delete messages")
 
     init {
         // Recently Deleted keeps things for 30 days.
@@ -168,13 +175,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val batch = repo.trashThread(threadId)
         if (threadId in settings.value.pinnedThreads) settingsStore.update { it.copy(pinnedThreads = it.pinnedThreads - threadId) }
         bump()
-        if (batch != null) offerUndo("Conversation deleted") { restoreBatch(batch) }
+        if (batch != null) offerUndo("Conversation deleted") { restoreBatch(batch) } else notDefaultNotice()
     }
 
     fun deleteMessages(ids: Collection<Long>) = viewModelScope.launch(Dispatchers.IO) {
         val batch = repo.trashMessages(ids)
         bump()
         if (batch != null) offerUndo(if (ids.size == 1) "Message deleted" else "${ids.size} messages deleted") { restoreBatch(batch) }
+        else notDefaultNotice()
     }
 
     private fun restoreBatch(batch: Long) = viewModelScope.launch(Dispatchers.IO) {
@@ -215,7 +223,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun blockAndReport(c: Conversation) = viewModelScope.launch(Dispatchers.IO) {
         val key = Categorizer.senderKey(c.address)
         settingsStore.update { it.copy(blockedSenders = it.blockedSenders + key, pinnedThreads = it.pinnedThreads - c.threadId) }
-        repo.moveThreadToSpam(c.threadId, "Reported by you")
+        // The sender is blocked either way; existing messages only move if Android lets us delete them.
+        if (repo.moveThreadToSpam(c.threadId, "Reported by you")) notice("${c.displayName} blocked and moved to Spam")
+        else notice("${c.displayName} blocked. Set Glass SMS as default to move old messages to Spam")
         bump()
     }
 
@@ -254,7 +264,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun clean(messages: List<Message>) = viewModelScope.launch(Dispatchers.IO) {
         val batch = repo.trashAll(messages)
         bump()
-        if (batch != null) offerUndo("${messages.size} messages cleaned up") { restoreBatch(batch) }
+        if (batch != null) offerUndo("${messages.size} messages cleaned up") { restoreBatch(batch) } else notDefaultNotice()
     }
 
     private fun bump() {

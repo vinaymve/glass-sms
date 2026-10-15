@@ -47,12 +47,24 @@ object Links {
         return found.sortedBy { it.start }
     }
 
-    // WEB_URL also matches things like "Rs.1357.26"; demand a scheme, "www." or a lettered TLD.
+    private val knownTlds = setOf(
+        "com", "in", "net", "org", "co", "io", "ly", "me", "app", "gov", "edu", "info", "biz", "xyz", "ai", "dev",
+        "cc", "to", "gl", "gd", "shop", "store", "online", "site", "live", "link", "page", "tech", "club", "world",
+        "bank", "money", "pay", "news", "tv", "uk", "us", "ae", "sg", "au", "ca",
+    )
+
+    // WEB_URL also matches things like "Rs.1357.26" and "13:31.Not You?"; demand a scheme, "www.",
+    // or a real-looking host: letters before the TLD and a known (or lowercase two-letter) TLD.
     private fun looksLikeUrl(raw: String): Boolean {
         if (raw.startsWith("http://", true) || raw.startsWith("https://", true) || raw.startsWith("www.", true)) return true
         val host = raw.substringBefore('/').substringBefore('?')
-        val tld = host.substringAfterLast('.', "")
-        return tld.length >= 2 && tld.all { it.isLetter() } && host.count { it == '.' } >= 1 && host.any { it.isLetter() }
+        val labels = host.split('.')
+        if (labels.size < 2) return false
+        val tld = labels.last()
+        val name = labels[labels.size - 2]
+        if (name.none { it.isLetter() }) return false
+        return tld.lowercase() in knownTlds && tld == tld.lowercase() ||
+            (tld.length == 2 && tld.all { it.isLowerCase() })
     }
 
     fun uriFor(url: String): Uri = Uri.parse(if (url.contains("://")) url else "https://$url")
