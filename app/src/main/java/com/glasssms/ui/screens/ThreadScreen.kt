@@ -5,6 +5,15 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.material.icons.rounded.WarningAmber
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.MarkChatUnread
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsOff
+import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.TextLinkStyles
 import com.glasssms.otp.CodeActions
@@ -113,6 +122,16 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     var selecting by remember { mutableStateOf<Message?>(null) }
     var pendingDelete by remember { mutableStateOf<Message?>(null) }
+    val conversations by vm.conversations.collectAsStateWithLifecycle()
+    val conversation = conversations?.firstOrNull { it.threadId == threadId }
+    var chatMenu by remember { mutableStateOf(false) }
+    var confirmDeleteChat by remember { mutableStateOf(false) }
+
+    // Whole-conversation actions that remove it from view return to the inbox, where Undo shows.
+    fun deleteChat() {
+        vm.deleteThread(threadId)
+        vm.pop()
+    }
     var openingUrl by remember { mutableStateOf<String?>(null) }
 
     fun onLink(target: LinkTarget) {
@@ -192,12 +211,51 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
                 onClick = { vm.pop() },
                 modifier = Modifier.align(Alignment.TopStart),
             )
-            Column(Modifier.align(Alignment.TopCenter), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .clip(RoundedCornerShape(20.dp))
+                    .clickable { chatMenu = true },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 Avatar(name, size = 52.dp)
                 Spacer(Modifier.height(4.dp))
                 GlassCapsule(haze, Modifier.height(30.dp)) {
                     Text(name, style = IosType.footnote, fontWeight = FontWeight.SemiBold, color = p.label, maxLines = 1)
                 }
+            }
+            Box(Modifier.align(Alignment.TopEnd)) {
+                GlassIconButton(Icons.Rounded.MoreHoriz, "Conversation options", haze, onClick = { chatMenu = true })
+                val pinned = threadId in settings.pinnedThreads
+                val muted = threadId in settings.mutedThreads
+                val archived = threadId in settings.archivedThreads
+                GlassMenu(
+                    expanded = chatMenu,
+                    onDismiss = { chatMenu = false },
+                    alignEnd = true,
+                    items = buildList {
+                        add(MenuItem(if (pinned) "Unpin" else "Pin", if (pinned) Icons.Rounded.PushPin else Icons.Outlined.PushPin) { vm.togglePin(threadId) })
+                        conversation?.let { c ->
+                            if (c.unreadCount == 0) add(MenuItem("Mark as Unread", Icons.Rounded.MarkChatUnread) { vm.toggleRead(c); vm.pop() })
+                        }
+                        add(
+                            if (muted) MenuItem("Unmute", Icons.Rounded.Notifications) { vm.toggleMute(threadId) }
+                            else MenuItem("Mute", Icons.Rounded.NotificationsOff) { vm.toggleMute(threadId) },
+                        )
+                        add(
+                            if (archived) MenuItem("Unarchive", Icons.Rounded.Unarchive) { vm.toggleArchive(threadId) }
+                            else MenuItem("Archive", Icons.Rounded.Archive) { vm.toggleArchive(threadId); vm.pop() },
+                        )
+                        conversation?.let { c ->
+                            add(MenuItem("Block & Report Spam", Icons.Rounded.Block, destructive = true) { vm.blockAndReport(c); vm.pop() })
+                        }
+                        add(
+                            MenuItem("Delete Conversation", Icons.Rounded.Delete, destructive = true) {
+                                if (settings.confirmDelete) confirmDeleteChat = true else deleteChat()
+                            },
+                        )
+                    },
+                )
             }
         }
 
@@ -217,13 +275,27 @@ fun ThreadScreen(vm: AppViewModel, threadId: Long, address: String) {
 
     selecting?.let { m -> SelectTextDialog(m.body) { selecting = null } }
 
+    if (confirmDeleteChat) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteChat = false },
+            title = { Text("Delete conversation?", style = IosType.headline) },
+            text = { Text("All messages with $name move to Recently Deleted, where you can restore them for 30 days.", style = IosType.subhead) },
+            confirmButton = {
+                TextButton(onClick = { confirmDeleteChat = false; deleteChat() }) {
+                    Text("Delete", color = p.red, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteChat = false }) { Text("Cancel", color = p.accent) } },
+        )
+    }
+
     openingUrl?.let { url -> LinkSheet(url) { openingUrl = null } }
 
     pendingDelete?.let { m ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("Delete message?", style = IosType.headline) },
-            text = { Text("This message will be permanently deleted from this phone.", style = IosType.subhead) },
+            text = { Text("It moves to Recently Deleted, where you can restore it for 30 days.", style = IosType.subhead) },
             confirmButton = {
                 TextButton(onClick = { vm.deleteMessages(listOf(m.id)); pendingDelete = null }) {
                     Text("Delete", color = p.red, fontWeight = FontWeight.SemiBold)

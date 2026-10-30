@@ -145,7 +145,7 @@ fun CodesScreen(vm: AppViewModel) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("Delete expired codes?", style = IosType.headline) },
-            text = { Text("${expired.size} messages will be permanently deleted from this phone.", style = IosType.subhead) },
+            text = { Text("${expired.size} messages move to Recently Deleted, where you can restore them for 30 days.", style = IosType.subhead) },
             confirmButton = {
                 TextButton(onClick = { vm.deleteMessages(expired.map { it.messageId }); confirmClear = false }) {
                     Text("Delete", color = p.red, fontWeight = FontWeight.SemiBold)

@@ -452,7 +452,7 @@ fun InboxScreen(vm: AppViewModel) {
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("Delete conversation?", style = IosType.headline) },
-            text = { Text("All messages with ${c.displayName} will be permanently deleted from this phone.", style = IosType.subhead) },
+            text = { Text("All messages with ${c.displayName} move to Recently Deleted, where you can restore them for 30 days.", style = IosType.subhead) },
             confirmButton = {
                 TextButton(onClick = { delete(c.threadId); pendingDelete = null }) {
                     Text("Delete", color = p.red, fontWeight = FontWeight.SemiBold)
